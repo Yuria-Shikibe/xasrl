@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -12,21 +11,27 @@
 #include <utility>
 
 namespace srl {
-    enum class duplicate_policy : std::uint8_t {
-        deduplicate,
-        reject,
-    };
-
-    struct decode_options {
-        duplicate_policy duplicates{duplicate_policy::deduplicate};
-    };
-
     namespace detail {
+        template<typename T>
+        concept statically_sized_range = std::ranges::sized_range<T> && requires(T &value) { std::cw<std::ranges::size(value)>; };
+
+        template<typename T>
+        consteval std::size_t range_fixed_size() {
+            if constexpr (statically_sized_range<T>) {
+                using size_constant = decltype([](T &value) {
+                    return std::cw<std::ranges::size(value)>;
+                }(std::declval<T &>()));
+                return size_constant::value;
+            } else {
+                return std::dynamic_extent;
+            }
+        }
+
         template<typename T, typename = void>
         struct default_container_traits_impl {
             using element_type = std::ranges::range_value_t<T>;
             static constexpr std::uint8_t mapping_group_size = 1;
-            static constexpr std::size_t fixed_size = std::dynamic_extent;
+            static constexpr std::size_t fixed_size = range_fixed_size<T>();
         };
 
         template<typename T>
@@ -37,7 +42,7 @@ namespace srl {
             using mapped_type = typename T::mapped_type;
             using element_type = std::pair<key_type, mapped_type>;
             static constexpr std::uint8_t mapping_group_size = 2;
-            static constexpr std::size_t fixed_size = std::dynamic_extent;
+            static constexpr std::size_t fixed_size = range_fixed_size<T>();
         };
     }
 
@@ -50,20 +55,6 @@ namespace srl {
     template<typename T>
         requires std::ranges::forward_range<const T>
     struct container_traits<T, void> : default_container_traits<T> {};
-
-    template<typename T, std::size_t Size>
-    struct container_traits<std::array<T, Size>, void> {
-        using element_type = T;
-        static constexpr std::uint8_t mapping_group_size = 1;
-        static constexpr std::size_t fixed_size = Size;
-    };
-
-    template<typename T, std::size_t Size>
-    struct container_traits<T[Size], void> {
-        using element_type = T;
-        static constexpr std::uint8_t mapping_group_size = 1;
-        static constexpr std::size_t fixed_size = Size;
-    };
 
     namespace detail {
         template<typename T>
@@ -129,15 +120,10 @@ namespace srl {
 
         template<typename T>
         concept adapted_container = has_container_traits<T>
-                                    && std::ranges::forward_range<
-                                        decltype(container_range(std::declval<const T &>()))>
-                                    && (container_traits<T>::mapping_group_size == 1
-                                        || container_traits<T>::mapping_group_size == 2)
-                                    && (fixed_container<T>
-                                        || (clearable_container<T>
-                                            && (insert_after_container<T>
-                                                || ordinary_insertable_container<T>)))
-                                    && !std::same_as<std::remove_cv_t<T>, std::string>;
+                                    && !std::ranges::view<T>
+                                    && std::ranges::forward_range<decltype(detail::container_range(std::declval<const T &>()))>
+                                    && (container_traits<T>::mapping_group_size == 1 || container_traits<T>::mapping_group_size == 2)
+                                    && (fixed_container<T> | (clearable_container<T>  && (insert_after_container<T> || ordinary_insertable_container<T>)));
 
         template<typename T>
         void clear_container(T &value) {

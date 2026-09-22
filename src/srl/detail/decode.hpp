@@ -1,21 +1,13 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
-#include <concepts>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <expected>
-#include <limits>
 #include <meta>
 #include <optional>
 #include <ranges>
 #include <span>
-#include <string>
-#include <string_view>
-#include <tuple>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -30,15 +22,13 @@ namespace srl {
             const serialization_context &context,
             id_type id = 0,
             std::uint32_t offset = 0,
-            decode_options options = {},
             std::optional<duplicate_policy> local_duplicates = std::nullopt);
 
         template<reflected_record T>
         [[nodiscard]] std::expected<void, error> decode_record(
             const entry_view &entry,
             T &out,
-            const serialization_context &context,
-            decode_options options) {
+            const serialization_context &context) {
             static_assert(schema_valid<T>(), "invalid reflected serialization schema");
             if (entry.head.kind != entry_kind::record
                 || entry.head.mapping != mapping_kind::field
@@ -72,7 +62,7 @@ namespace srl {
                         auto decode_storage = [&](storage_type &storage) {
                             return detail::decode_value(field->bytes, storage, context,
                                                         annotation.id, field->offset,
-                                                        options, local_duplicates);
+                                                        local_duplicates);
                         };
                         if constexpr (conversion.handler_id == nullptr) {
                             storage_type storage{};
@@ -93,8 +83,8 @@ namespace srl {
                             status = std::unexpected{locate_error(
                                 status.error(), annotation.id, field->offset)};
                         }
-                    } else if constexpr (field_atomic_annotation_count<Entity>() == 1) {
-                        status = detail::decode_forced_atomic_field<Entity>(
+                    } else if constexpr (entity_uses_forced_object_representation<T, Entity>()) {
+                        status = detail::decode_forced_atomic_field<T, Entity>(
                             field->bytes,
                             detail::entity_reference<Entity, Kind>(out));
                         if (!status) {
@@ -114,7 +104,6 @@ namespace srl {
                             context,
                             annotation.id,
                             field->offset,
-                            options,
                             local_duplicates);
                     }
                 });
@@ -126,7 +115,6 @@ namespace srl {
             const entry_view &entry,
             T &out,
             const serialization_context &context,
-            decode_options options,
             std::optional<duplicate_policy> local_duplicates) {
             using traits = container_traits<T>;
             constexpr auto group_size = traits::mapping_group_size;
@@ -146,7 +134,7 @@ namespace srl {
                 detail::reserve_container(out, element_count);
             }
 
-            const auto duplicates = local_duplicates.value_or(options.duplicates);
+            const auto duplicates = local_duplicates.value_or(context.config.duplicates);
             auto decode_slot = [&](std::size_t index, auto &value) -> std::expected<void, error> {
                 auto slot = entry.find(static_cast<id_type>(index));
                 if (!slot) {
@@ -157,8 +145,7 @@ namespace srl {
                     value,
                     context,
                     static_cast<id_type>(index),
-                    slot->offset,
-                    options);
+                    slot->offset);
             };
 
             if constexpr (group_size == 1) {
@@ -185,7 +172,8 @@ namespace srl {
                             return decoded;
                         }
                         const auto inserted = detail::insert_container_value(out, std::move(element));
-                        if (!inserted && duplicates == duplicate_policy::reject) {
+                        if (!inserted
+                            && duplicates == duplicate_policy::reject) {
                             return fail(
                                 error_code::duplicate_container_element,
                                 static_cast<id_type>(index));
@@ -207,7 +195,8 @@ namespace srl {
                         std::move(mapped),
                     };
                     const auto inserted = detail::insert_container_value(out, std::move(element));
-                    if (!inserted && duplicates == duplicate_policy::reject) {
+                    if (!inserted
+                        && duplicates == duplicate_policy::reject) {
                         return fail(
                             error_code::duplicate_container_element,
                             static_cast<id_type>(index * 2));
@@ -224,10 +213,15 @@ namespace srl {
             const serialization_context &context,
             id_type id,
             std::uint32_t offset,
-            decode_options options,
             std::optional<duplicate_policy> local_duplicates) {
             if constexpr (atomic_serializable<T>) {
-                auto decoded = atomic_codec<codec_value_type<T>>::decode(source, out);
+                using value_type = codec_value_type<T>;
+                constexpr auto fixed_size = atomic_codec<value_type>::fixed_size;
+                if (source.size() != fixed_size) {
+                    return fail(error_code::invalid_payload_shape, id, offset);
+                }
+                auto decoded = atomic_codec<value_type>::decode(
+                    source.template first<fixed_size>(), out);
                 if (!decoded) {
                     auto error = decoded.error();
                     if (error.id == 0) {
@@ -248,14 +242,13 @@ namespace srl {
                     *entry,
                     out,
                     context,
-                    options,
                     local_duplicates);
             } else {
                 auto entry = parse_entry(source);
                 if (!entry) {
                     return std::unexpected{entry.error()};
                 }
-                return detail::decode_record(*entry, out, context, options);
+                return detail::decode_record(*entry, out, context);
             }
         }
     }

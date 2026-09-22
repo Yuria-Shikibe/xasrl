@@ -6,6 +6,8 @@ This repository explores C++26 reflection to build a highly automated serializat
 library for games. Prefer compile-time reflection and annotations over handwritten
 registration, macros, or duplicated serialization boilerplate.
 
+* This repo is under DEV, no forward compatibility guarantees are required.
+
 - `src/srl/`: serialization library, currently centered on `core.hpp`.
 - `src/main.cpp`: executable experiments and usage examples.
 - `xmake.lua`: authoritative build configuration; current target: `untitled2`.

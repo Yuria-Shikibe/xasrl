@@ -1,6 +1,3 @@
-#pragma once
-
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -9,13 +6,16 @@
 #include <set>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
+
+#include <gtest/gtest.h>
 
 #include "srl/io.hpp"
 
 namespace conversion_tests {
+    inline const srl::serialization_context default_context;
+
     using stored_integer = std::uint32_t;
 
     inline void check(bool condition, const char *message) {
@@ -205,7 +205,8 @@ namespace conversion_tests {
     struct converted_container {
         [[=srl::tag::field{1}]]
         [[=srl::conversion_tag{^^std::set<int>}]]
-        [[=srl::tag::container{.duplicates = srl::duplicate_policy::reject}]]
+        [[=srl::tag::container{
+            .duplicates = srl::duplicate_policy::reject}]]
         runtime_set values;
     };
 
@@ -275,7 +276,15 @@ namespace conversion_tests {
     };
 
     template<typename T>
-    concept packs_without_context = requires(const T &value) { srl::pack(value); };
+    concept packs_without_context = requires(const T &value) {
+        srl::pack(value);
+    };
+
+    template<typename T>
+    concept packs_with_context = requires(const T &value,
+                                          const srl::serialization_context &context) {
+        srl::pack(value, context);
+    };
 
     static_assert(srl::schema_valid<direct_record>());
     static_assert(srl::schema_valid<record_conversion>());
@@ -284,18 +293,14 @@ namespace conversion_tests {
     static_assert(srl::schema_valid<two_references>());
     static_assert(srl::schema_valid<converted_container>());
     static_assert(srl::schema_valid<converted_nested_record>());
-    static_assert(!srl::requires_context<direct_record>());
-    static_assert(srl::requires_context<nested_record>());
-    static_assert(srl::requires_context<converted_nested_record>());
-    static_assert(packs_without_context<direct_record>);
-    static_assert(!packs_without_context<reference_record>);
-    static_assert(!packs_without_context<nested_record>);
+    static_assert(!packs_without_context<direct_record>);
+    static_assert(packs_with_context<direct_record>);
     static_assert(requires(std::span<const std::byte> bytes, direct_record &out,
                            const std::filesystem::path &path) {
-        srl::extract<direct_record>(bytes, {});
-        srl::unpack(bytes, out, {});
-        srl::decode_root(bytes, out, {});
-        srl::load<direct_record>(path, {});
+        srl::extract<direct_record>(bytes, default_context);
+        srl::unpack(bytes, out, default_context);
+        srl::decode_root(bytes, out, default_context);
+        srl::load<direct_record>(path, default_context);
     });
     static_assert(!srl::schema_valid<missing_field_tag>());
     static_assert(!srl::schema_valid<duplicate_conversion>());
@@ -317,32 +322,32 @@ namespace conversion_tests {
     inline void test_direct() {
         const direct_record source{runtime_number{42}};
         runtime_number::writes = 0;
-        auto bytes = srl::pack(source);
+        auto bytes = srl::pack(source, default_context);
         check(bytes.has_value() && runtime_number::writes == 1, "direct conversion repeated during pack");
         runtime_number::reads = 0;
-        auto copy = srl::extract<direct_record>(bytes->span());
+        auto copy = srl::extract<direct_record>(bytes->span(), default_context);
         check(copy.has_value() && copy->number.value == 42 && runtime_number::reads == 1,
               "direct conversion did not round trip");
         runtime_number::writes = 0;
-        auto size = srl::serialized_size(source);
+        auto size = srl::serialized_size(source, default_context);
         check(size.has_value() && *size == bytes->size() && runtime_number::writes == 1,
               "direct conversion measurement failed");
         srl::byte_buffer destination;
         destination.resize(*size);
         runtime_number::writes = 0;
-        check(srl::pack_into(destination.span(), source).has_value()
+        check(srl::pack_into(destination.span(), source, default_context).has_value()
               && destination == *bytes && runtime_number::writes == 1, "direct pack_into repeated conversion");
 
-        auto nested = srl::pack(record_conversion{runtime_number{73}});
+        auto nested = srl::pack(record_conversion{runtime_number{73}}, default_context);
         check(nested.has_value(), "record storage conversion failed");
-        auto nested_copy = srl::extract<record_conversion>(nested->span());
+        auto nested_copy = srl::extract<record_conversion>(nested->span(), default_context);
         check(nested_copy.has_value() && nested_copy->number.value == 73, "record storage decode failed");
 
         const std::vector<move_only_conversion> move_only{
             {runtime_number{1}}, {runtime_number{2}}, {runtime_number{3}}};
-        auto moved = srl::pack(move_only);
+        auto moved = srl::pack(move_only, default_context);
         check(moved.has_value(), "move-only storage could not be prepared");
-        auto moved_copy = srl::extract<std::vector<move_only_conversion>>(moved->span());
+        auto moved_copy = srl::extract<std::vector<move_only_conversion>>(moved->span(), default_context);
         check(moved_copy.has_value() && moved_copy->size() == 3
               && moved_copy->at(2).number.value == 3, "move-only storage did not round trip");
 
@@ -351,19 +356,19 @@ namespace conversion_tests {
         srl::detail::write_trivial(malformed.span(), static_cast<std::uint32_t>(malformed.size()));
         direct_record unchanged{runtime_number{99}};
         runtime_number::reads = 0;
-        auto rejected_number = srl::unpack(malformed.span(), unchanged);
+        auto rejected_number = srl::unpack(malformed.span(), unchanged, default_context);
         check(!rejected_number && rejected_number.error().code == srl::error_code::invalid_payload_shape
               && rejected_number.error().id == 7 && runtime_number::reads == 0
               && unchanged.number.value == 99, "invalid storage reached direct conversion");
 
-        auto container = srl::pack(converted_container{runtime_set{{1, 2, 3}}});
+        auto container = srl::pack(converted_container{runtime_set{{1, 2, 3}}}, default_context);
         check(container.has_value(), "container conversion failed");
-        auto container_copy = srl::extract<converted_container>(container->span());
+        auto container_copy = srl::extract<converted_container>(container->span(), default_context);
         check(container_copy.has_value() && container_copy->values.values == std::set{1, 2, 3},
               "container conversion decode failed");
-        auto duplicates = srl::pack(wire_container{{1, 1}});
+        auto duplicates = srl::pack(wire_container{{1, 1}}, default_context);
         check(duplicates.has_value(), "duplicate fixture failed");
-        auto rejected = srl::extract<converted_container>(duplicates->span());
+        auto rejected = srl::extract<converted_container>(duplicates->span(), default_context);
         check(!rejected && rejected.error().code == srl::error_code::duplicate_container_element,
               "converted container lost duplicate policy");
     }
@@ -385,7 +390,7 @@ namespace conversion_tests {
               "reference was not relocated through the receiving context");
         auto relocated = srl::pack(*copy, read_context);
         check(relocated.has_value() && *relocated == *bytes, "runtime address leaked into stored bytes");
-        auto stored = srl::extract<wire_reference>(bytes->span());
+        auto stored = srl::extract<wire_reference>(bytes->span(), default_context);
         check(stored.has_value() && stored->id == writer.id, "storage payload is not SrlTy");
 
         writer.writes = 0;
@@ -410,7 +415,7 @@ namespace conversion_tests {
         check(!invalid && invalid.error().code == srl::error_code::invalid_reference
               && invalid.error().id == 7, "invalid outgoing reference was accepted");
 
-        auto unknown = srl::pack(wire_reference{"unknown-id"});
+        auto unknown = srl::pack(wire_reference{"unknown-id"}, default_context);
         check(unknown.has_value(), "unknown reference fixture failed");
         reference_record unchanged{&first};
         auto failed = srl::unpack(unknown->span(), unchanged, read_context);
@@ -493,8 +498,11 @@ namespace conversion_tests {
         std::filesystem::remove(path);
     }
 
-    inline void run() {
+    TEST(Conversion, DirectStorage) {
         test_direct();
+    }
+
+    TEST(Conversion, SerializationContext) {
         test_context();
     }
 }

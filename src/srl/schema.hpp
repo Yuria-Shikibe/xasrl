@@ -1,20 +1,10 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <concepts>
 #include <cstddef>
-#include <cstdint>
-#include <cstring>
-#include <expected>
-#include <limits>
 #include <meta>
-#include <optional>
-#include <ranges>
 #include <span>
-#include <string>
-#include <string_view>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -29,7 +19,8 @@ namespace srl {
         if constexpr (!std::is_class_v<object_type>) {
             return false;
         } else {
-            return detail::has_field_annotations<object_type>();
+            return detail::auto_seq_annotation_count<object_type>() != 0
+                   || detail::has_field_annotations<object_type>();
         }
     }
 
@@ -51,27 +42,42 @@ namespace srl {
     namespace detail {
         template<typename T>
         consteval bool atomic_metadata_valid() {
-            if constexpr (atomic_annotation_count<T>() != 1 || !atomic_serializable<T>) {
-                return false;
-            } else if constexpr (!std::meta::bases_of(
-                                     ^^T,
-                                     std::meta::access_context::unchecked()).empty()) {
+            if constexpr (atomic_annotation_count<T>() != 1
+                          || auto_seq_annotation_count<T>() != 0
+                          || bypass_pointer_check_annotation_count<T>() > 1
+                          || !atomic_serializable<T>) {
                 return false;
             } else {
                 bool valid = true;
-                if constexpr (srl::atomic_uses_direct_object_representation<T>()
-                              && !atomic_options<T>().bypass_pointer_check
-                              && contains_pointer_representation<T>()) {
-                    valid = false;
-                }
-                for_each_atomic_member<T>(
-                    [&]<std::meta::info Member> {
-                        using declared_type = reflected_entity_type_t<Member>;
-                        if constexpr (std::meta::is_bit_field(Member)
-                                      || std::is_reference_v<declared_type>
-                                      || !std::meta::annotations_of_with_type(Member, ^^tag::field).empty()
-                                      || !std::meta::annotations_of_with_type(Member, ^^tag::atomic).empty()
-                                      || conversion_count<Member>() != 0) {
+                detail::for_each_reflected_entity<T>(
+                    [&]<std::meta::info Entity, reflected_entity_kind Kind> {
+                        using declared_type = reflected_entity_type_t<Entity>;
+                        constexpr auto transient_count = transient_annotation_count<Entity>();
+                        constexpr auto bypass_count =
+                            entity_bypass_pointer_check_annotation_count<Entity>();
+                        if constexpr (transient_count > 1
+                                      || (transient_count == 1
+                                          && (Kind != reflected_entity_kind::member
+                                              || !std::meta::annotations_of_with_type(Entity, ^^tag::field).empty()
+                                              || !std::meta::annotations_of_with_type(Entity, ^^tag::atomic).empty()
+                                              || !std::meta::annotations_of_with_type(Entity, ^^tag::container).empty()
+                                              || bypass_count != 0
+                                              || conversion_count<Entity>() != 0))) {
+                            valid = false;
+                        } else if constexpr (transient_count == 1) {
+                            return;
+                        } else if constexpr (bypass_count > 1
+                                      || (Kind == reflected_entity_kind::base && std::meta::is_virtual(Entity))
+                                      || (Kind == reflected_entity_kind::member && (std::meta::is_bit_field(Entity) || std::is_reference_v<declared_type>))
+                                      || !std::meta::annotations_of_with_type(Entity, ^^tag::field).empty()
+                                      || !std::meta::annotations_of_with_type(Entity, ^^tag::atomic).empty()
+                                      || !std::meta::annotations_of_with_type(Entity, ^^tag::container).empty()
+                                      || conversion_count<Entity>() != 0) {
+                            valid = false;
+                        } else if constexpr (contains_pointer_representation<
+                                                 reflected_entity_value_t<Entity>>()
+                                             && bypass_pointer_check_annotation_count<T>() == 0
+                                             && bypass_count == 0) {
                             valid = false;
                         }
                     });
@@ -111,53 +117,80 @@ namespace srl {
             return detail::container_schema_valid<object_type, Ancestors..., object_type>();
         } else if constexpr (!reflected_record<object_type>) {
             return false;
+        } else if constexpr (detail::auto_seq_annotation_count<object_type>() > 1) {
+            return false;
+        } else if constexpr (detail::bypass_pointer_check_annotation_count<object_type>() > 1
+                             || (detail::bypass_pointer_check_annotation_count<object_type>() != 0
+                                 && detail::auto_seq_annotation_count<object_type>() != 1)) {
+            return false;
         } else {
             bool valid = true;
             std::vector<id_type> ids;
             detail::for_each_reflected_entity<object_type>(
-                [&]<std::meta::info Entity, detail::reflected_entity_kind Kind> {
+                [&]<std::meta::info Entity, reflected_entity_kind Kind> {
+                    constexpr bool auto_sequence =
+                        detail::auto_seq_annotation_count<object_type>() == 1;
                     static constexpr auto annotations = std::define_static_array(
                         std::meta::annotations_of_with_type(Entity, ^^tag::field));
                     static constexpr auto atomic_annotations = std::define_static_array(
                         std::meta::annotations_of_with_type(Entity, ^^tag::atomic));
                     static constexpr auto container_annotations = std::define_static_array(
                         std::meta::annotations_of_with_type(Entity, ^^tag::container));
+                    constexpr auto transient_count = detail::transient_annotation_count<Entity>();
+                    constexpr auto bypass_count =
+                        detail::entity_bypass_pointer_check_annotation_count<Entity>();
                     constexpr auto conversions = detail::conversion_count<Entity>();
-                    if constexpr (annotations.size() > 1 || atomic_annotations.size() > 1
+                    constexpr bool serialized = auto_sequence || annotations.size() == 1;
+                    if constexpr (transient_count > 1
+                                  || (transient_count == 1
+                                      && (!auto_sequence
+                                          || annotations.size() != 0
+                                          || atomic_annotations.size() != 0
+                                          || container_annotations.size() != 0
+                                          || bypass_count != 0
+                                          || conversions != 0))) {
+                        valid = false;
+                    } else if constexpr (transient_count == 1) {
+                        return;
+                    } else if constexpr (annotations.size() > 1
+                                  || atomic_annotations.size() > 1
+                                  || bypass_count > 1
                                   || conversions > 1) {
                         valid = false;
                     } else if constexpr (conversions == 1
-                                         && (annotations.size() != 1
+                                         && (!serialized
                                              || atomic_annotations.size() != 0
-                                             || Kind != detail::reflected_entity_kind::member)) {
+                                             || bypass_count != 0
+                                             || Kind != reflected_entity_kind::member)) {
                         valid = false;
                     } else if constexpr (atomic_annotations.size() == 1
-                                         && (annotations.size() != 1
+                                         && (!serialized
                                              || container_annotations.size() != 0
-                                             || Kind != detail::reflected_entity_kind::member
-                                             || !detail::field_uses_forced_atomic_representation<Entity>())) {
+                                             || !detail::entity_uses_forced_object_representation<
+                                                 object_type, Entity>())) {
                         valid = false;
                     } else if constexpr (container_annotations.size() > 1
                                          || (container_annotations.size() == 1
-                                             && (annotations.size() != 1
-                                                 || !container_serializable<
-                                                     detail::field_storage_t<Entity>>))) {
+                                             && (!serialized
+                                                 || bypass_count != 0
+                                                 || !container_serializable<field_storage_t<Entity>>))) {
                         valid = false;
-                    } else if constexpr (annotations.size() == 1) {
-                        static constexpr auto annotation =
-                            std::meta::extract<tag::field>(annotations.front());
-                        using declared_type = detail::reflected_entity_type_t<Entity>;
-                        using value_type = detail::reflected_entity_value_t<Entity>;
-                        ids.push_back(annotation.id);
-                        if constexpr (Kind == detail::reflected_entity_kind::member
+                    } else if constexpr (bypass_count == 1
+                                         && !auto_sequence
+                                         && atomic_annotations.size() == 0) {
+                        valid = false;
+                    } else if constexpr (serialized) {
+                        using declared_type = reflected_entity_type_t<Entity>;
+                        using value_type = reflected_entity_value_t<Entity>;
+                        if constexpr (Kind == reflected_entity_kind::member
                                       && std::meta::is_bit_field(Entity)) {
                             valid = false;
-                        } else if constexpr (Kind == detail::reflected_entity_kind::base
+                        } else if constexpr (Kind == reflected_entity_kind::base
                                              && std::meta::is_virtual(Entity)) {
                             valid = false;
                         } else if constexpr (conversions == 1) {
                             constexpr auto conversion = detail::conversion_options<Entity>();
-                            using storage_type = detail::field_storage_t<Entity>;
+                            using storage_type = field_storage_t<Entity>;
                             if constexpr (!std::meta::is_type(conversion.target_type)
                                           || std::is_reference_v<declared_type>
                                           || std::is_const_v<declared_type>
@@ -180,9 +213,11 @@ namespace srl {
                                 valid = valid && detail::schema_valid_impl<
                                     storage_type, Ancestors..., object_type>();
                             }
-                        } else if constexpr (atomic_annotations.size() == 1) {
+                        } else if constexpr (detail::entity_uses_forced_object_representation<
+                                                 object_type, Entity>()) {
                             valid = valid
-                                    && detail::field_uses_forced_atomic_representation<Entity>();
+                                    && detail::entity_uses_forced_object_representation<
+                                        object_type, Entity>();
                         } else if constexpr (std::is_reference_v<declared_type>
                                               || std::is_pointer_v<value_type>) {
                             valid = false;
@@ -191,6 +226,14 @@ namespace srl {
                                 value_type, Ancestors..., object_type>();
                         }
                     }
+                });
+
+            if constexpr (detail::auto_seq_annotation_count<object_type>() == 1) {
+                valid = valid && detail::auto_seq_ids_representable<object_type>();
+            }
+            detail::for_each_serialized_entity<object_type>(
+                [&]<std::meta::info, reflected_entity_kind>(tag::field annotation) {
+                    ids.push_back(annotation.id);
                 });
 
             std::ranges::sort(ids);
@@ -207,35 +250,8 @@ namespace srl {
     consteval bool schema_valid() {
         return detail::schema_valid_impl<T>();
     }
-
     template<typename T>
-    consteval bool requires_context() {
-        static_assert(schema_valid<T>(), "invalid serialization schema");
-        using value_type = codec_value_type<T>;
-        if constexpr (atomic_serializable<value_type>) {
-            return false;
-        } else if constexpr (container_serializable<value_type>) {
-            using traits = container_traits<value_type>;
-            if constexpr (traits::mapping_group_size == 1) {
-                return requires_context<typename traits::element_type>();
-            } else {
-                return requires_context<typename traits::key_type>()
-                       || requires_context<typename traits::mapped_type>();
-            }
-        } else {
-            bool result = false;
-            detail::for_each_serialized_entity<value_type>(
-                [&]<std::meta::info Entity, detail::reflected_entity_kind>(tag::field) {
-                    if constexpr (detail::conversion_count<Entity>() == 1) {
-                        result |= detail::conversion_options<Entity>().handler_id != nullptr;
-                    }
-                    if constexpr (detail::field_atomic_annotation_count<Entity>() == 0) {
-                        result |= requires_context<detail::field_storage_t<Entity>>();
-                    }
-                });
-            return result;
-        }
-    }
+    concept schemaed = detail::schema_valid_impl<T>();
 
     template<typename T>
     consteval std::size_t serialized_field_count() {
@@ -247,4 +263,3 @@ namespace srl {
         return count;
     }
 }
-

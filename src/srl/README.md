@@ -8,8 +8,8 @@
 - `annotations.hpp`：字段、原子类型和容器注解。
 - `container.hpp`：容器 traits、容器适配约束与插入工具。
 - `context.hpp`：引用转换 handler 与序列化上下文。
-- `codec/base.hpp`：`atomic_codec` 接口及基础类型、字符串特化。
-- `codec/reflected.hpp`：由反射成员自动生成的原子 codec 特化。
+- `codec/base.hpp`：`atomic_codec` 接口及基础类型特化。
+- `codec/reflected.hpp`：由对象表示自动生成的原子 codec 特化。
 - `schema.hpp`：可序列化概念、schema 静态校验和上下文需求分析。
 - `detail/reflection.hpp`：纯反射遍历、注解读取与类型分析工具。
 - `detail/encode.hpp`：记录、容器和根节点的编码计划实现。
@@ -55,6 +55,30 @@ bit-field 和没有序列化规则的字段都会使 `schema_valid<T>()` 返回 
 
 解码记录时，以目标类型的字段 ID 为准：目标需要的字段必须存在，源对象中的未知字段
 会被忽略。因此同一份二进制可以转换为多个字段兼容的元数据类型。
+
+### 自动顺序 ID
+
+`auto_seq` 将直接基类和成员都纳入记录，ID 从 `0` 开始，先按直接基类声明顺序，再按成员
+声明顺序递增。`transient` 会跳过对应实体；显式 `field` 会设置当前 ID，后续实体从该 ID
+的下一个值继续，类似枚举值的自动顺延。重复 ID 或顺延溢出会使 schema 无效。
+
+```cpp
+struct [[=srl::tag::auto_seq{}]] Base {
+    std::uint32_t base_value{}; // ID 0
+};
+
+struct [[=srl::tag::auto_seq{}]] State : Base {
+    std::uint32_t value{}; // ID 1
+
+    [[=srl::tag::transient{}]]
+    void *runtime_only{}; // 跳过
+
+    [[=srl::tag::field{.id = 4}]]
+    std::string name{}; // ID 4
+
+    bool active{}; // ID 5
+};
+```
 
 ## 字段表示转换
 
@@ -142,12 +166,13 @@ context.register_handler(srl::handler_key<AssetReferenceKey>(), handler);
   保证存活，不能指向临时 `SrlTy` 或解码临时副本。
 - `unpack` 仍使用临时副本加交换，错误或异常不会改变目标；`decode_root` 允许部分更新。
   handler 自身在所有失败路径中也必须保持参数类型的不变量。
-- `pack(value, context)`、`serialized_size(value, context)`、`pack_into(bytes, value, context)`
-  和 `save(path, value, context)` 均支持上下文；`extract<T>(bytes, context, options)`、
-  `unpack(bytes, out, context, options)`、`decode_root(bytes, out, context, options)`、
-  `load<T>(path, context, options)` 的 `options` 可省略。
-- 无上下文重载保留，但仅接受递归检查后不需要 handler 的 schema。可用
-  `requires_context<T>()` 查询合法 schema 是否需要上下文。
+- 所有对象级入口都必须显式传入上下文：`pack(value, context)`、
+  `serialized_size(value, context)`、`pack_into(bytes, value, context)`、
+  `extract<T>(bytes, context)`、`unpack(bytes, out, context)`、
+  `decode_root(bytes, out, context)`、`save(path, value, context)` 和
+  `load<T>(path, context)`。即使 schema 不需要 handler，也不会隐式创建临时上下文。
+- 运行时策略属于上下文，而不是额外的 options 参数。例如根容器重复项策略通过
+  `context.duplicates` 配置；同一个上下文因此完整描述一次操作所需的 handler 与策略。
 - 一次保存先创建递归编码计划，持有转换结果，再使用同一结果测量与写入；普通字段不额外复制。
   `serialized_size` 与随后 `pack_into` 是独立操作，不复用转换结果。整个调用期间，源对象、
   容器迭代顺序和外部解析环境必须稳定，库不对外部系统提供快照或锁定。
@@ -165,8 +190,10 @@ context.register_handler(srl::handler_key<AssetReferenceKey>(), handler);
 
 容器是独立于原子和反射记录的第三类 entry。库自动识别可重复遍历、可清空并可重新插入
 元素的 owning range，并根据容器能力选择 `reserve`、尾插、普通插入或 `insert_after`。
-`std::array` 和原生数组 `T[N]` 作为固定长度容器单独处理；`std::string` 仍使用原子
-codec，`std::span` 和 range view 不会被当作可反序列化容器。原生数组可作为字段使用，
+如果 `ranges::size` 在值未知的 range 引用上仍可作为常量表达式，`container_traits`
+会自动把尺寸认定为由类型决定的固定长度；这覆盖 `std::array`、原生数组 `T[N]` 以及
+具有同类 `constexpr size()` 的自定义容器。`std::string` 仍作为变长字符容器处理，
+`std::span` 和 range view 不会被当作可反序列化容器。原生数组可作为字段使用，
 根数组则通过 `pack`/`unpack` 往返；`extract<T>` 不能返回 C++ 原生数组值。
 
 内建规则覆盖 `array`、`vector`、`deque`、`list`、`forward_list`、set/map 系列及其
@@ -190,12 +217,19 @@ struct srl::container_traits<MyContainer>
 };
 ```
 
-解码唯一 set/map 时默认沿用容器语义去重。根容器可通过 `decode_options` 请求拒绝重复项；
-反射字段可用独立 tag 覆盖该策略：
+解码唯一 set/map 时默认沿用容器语义去重。根容器通过上下文请求拒绝重复项：
+
+```cpp
+srl::serialization_context context{
+    srl::duplicate_policy::reject};
+```
+
+反射字段可用独立 tag 覆盖上下文策略：
 
 ```cpp
 [[=srl::tag::field{.id = 1}]]
-[[=srl::tag::container{.duplicates = srl::duplicate_policy::reject}]]
+[[=srl::tag::container{
+    .duplicates = srl::duplicate_policy::reject}]]
 std::set<int> ids;
 ```
 
@@ -211,35 +245,62 @@ struct [[=srl::tag::atomic{}]] Vec2 {
 };
 ```
 
-`atomic` 标记包含三个选项：
+`atomic` 标记包含两个选项：
 
 ```cpp
 struct atomic {
-    bool propagate{true};
     bool allow_padding{false};
-    bool bypass_pointer_check{false};
 };
 ```
 
-原子属性默认允许向外传播。一个自动生成原子 codec 的类型，其每个成员都必须已有原子
-codec，并且允许传播；整数、浮点、枚举和 `bool` 等原生类型天然允许传播，不需要额外标记。
-若某个原子类型不应成为更大原子对象的一部分，可声明
-`[[=srl::tag::atomic{.propagate = false}]]`，使用它作为成员的类型便不能再自动标记为原子。
-
-自动生成的 codec 按以下顺序选择二进制写法：
+自动生成的 codec 只支持对象表示路径：
 
 1. `allow_padding = true`：直接复制完整对象表示，包括 padding；类型必须 trivially copyable。
 2. `allow_padding = false` 且 `std::has_unique_object_representations_v<T>`：仍直接复制完整对象
    表示；类型必须 trivially copyable。
-3. 其余情况：按成员声明顺序逐个调用成员的原子 codec，不写入类型自身的 padding；成员
-   codec 必须是固定大小，但外层类型本身不要求 trivially copyable。
 
-自动生成还要求类型没有基类、引用、bit-field 或字段标记。直接复制完整对象表示时，库会
-递归检查对象表示中是否包含指针或成员指针并默认拒绝，避免把进程地址直接写入 wire。
-只有明确安排了解码后的指针修复时，才应使用
-`[[=srl::tag::atomic{.bypass_pointer_check = true}]]` 跳过该检查；该选项不会提供地址修复、
-跨进程有效性或可移植性。库在编译期要求目标使用 8-bit byte 和小端序，不提供大端兼容
-或运行时字节序转换。
+不再回退到逐基类、逐成员调用子对象 codec。需要按实体顺序编码的类型应改用 `auto_seq`。
+
+自动原子类型可以用 `transient` 排除仅供运行时使用的成员：
+
+```cpp
+struct [[=srl::tag::atomic{}]] CachedValue {
+    std::uint32_t value{};
+
+    [[=srl::tag::transient{}]]
+    std::uint32_t cache_generation{};
+};
+```
+
+存在 `transient` 成员时，编码、解码和固定大小计算会完全跳过该成员；解码时它保留目标
+对象构造后的默认值。若类型设置了 `allow_padding = true` 或具有独一对象表示，且对象布局
+不存在 transient 与其它子对象的重叠，自动 codec 会合并 transient 之外的连续对象表示区间，
+用少量 `memcpy` 读写；无法安全形成这些区间时 schema 无效。`transient` 只能单独标记自动原子类型的
+非静态数据成员，不能用于普通 record，也不能和 `field`、字段级 `atomic`、`container` 或
+转换标记组合。
+
+自动生成支持 public、protected 和 private 的非虚直接基类；成员不能是引用、bit-field 或
+带字段标记。直接复制对象表示时，库会递归检查指针或成员指针并默认拒绝，避免把进程地址
+写入 wire。
+
+指针检查由独立的 `bypass_pointer_check` tag 控制。标在类型声明上时，对该类型的所有直接
+基类和成员生效；标在单独成员或基类上时，只强制包含该实体。该规则同时适用于 `atomic`
+和 `auto_seq`：`auto_seq` 中被放行的指针实体会直接复制该实体的对象表示。
+
+```cpp
+struct [[=srl::tag::atomic{}]]
+       [[=srl::tag::bypass_pointer_check{}]] ProcessLocalHandle {
+    void *value{};
+};
+
+struct [[=srl::tag::auto_seq{}]] State {
+    [[=srl::tag::bypass_pointer_check{}]]
+    void *runtime_address{};
+};
+```
+
+该 tag 不提供地址修复、跨进程有效性或可移植性。库在编译期要求目标使用 8-bit byte 和
+小端序，不提供大端兼容或运行时字节序转换。
 
 无法修改声明的第三方平凡类型可以在字段上附加 `atomic`，强制该字段直接复制对象表示：
 
@@ -252,20 +313,22 @@ struct Record {
 ```
 
 字段级强制原子要求类型 trivially copyable，并且默认要求独一对象表示；若确认 padding 也
-属于约定的 wire representation，可设置 `.allow_padding = true`。指针检查和 bypass 规则
-与类型级直接对象复制一致。
+属于约定的 wire representation，可设置 `.allow_padding = true`。需要包含指针表示时，另加
+`[[=srl::tag::bypass_pointer_check{}]]`。
 
-整数、浮点、枚举、`bool` 和 `std::string` 是内建原子类型。变长或特殊类型可显式特化
-`srl::atomic_codec<T>`。自定义 codec 先通过 `encoded_size(value)` 报告准确大小，随后直接
-对调用方提供的 `std::span<std::byte>` 和 `std::span<const std::byte>` 编解码，不创建中间
-payload buffer。自定义类型仍应在声明处标记 `[[=srl::tag::atomic{}]]`。
+整数、浮点、枚举和 `bool` 是内建原子类型。`std::string` 始终走字符容器路径，不提供
+`atomic_codec<std::string>`。其它固定尺寸的特殊类型可显式特化 `srl::atomic_codec<T>`。
+自定义 codec 必须提供可在编译期求值的 `fixed_size`，并直接对调用方提供的
+`std::span<std::byte, fixed_size>` 和 `std::span<const std::byte, fixed_size>` 编解码，不创建
+中间 payload buffer。变长类型应使用容器或 record 表示。自定义类型仍应在声明处标记
+`[[=srl::tag::atomic{}]]`。
 
 ## 内存格式
 
 线格式直接使用受支持小端目标的对象表示。header 和 mapping 是固定布局的
-trivially copyable 类型，完整复制其对象表示；atomic content 则按上节的三条规则选择完整
-对象复制或逐成员写入。因此只有显式允许 padding，
-或类型具有独一对象表示时，复合原子类型才会把完整对象表示直接复制到文件。
+trivially copyable 类型，完整复制其对象表示；atomic content 只使用完整或 transient 分段的
+对象表示复制。因此只有显式允许 padding，或类型具有独一对象表示时，复合原子类型才会
+把对象表示复制到文件；结构化的逐实体编码由 record/`auto_seq` 承担。
 
 ```cpp
 struct entry_head {
@@ -328,21 +391,73 @@ struct storage_head {
 文件锁和增量更新。
 
 ```cpp
-auto bytes = srl::pack(value);
-auto copy = srl::extract<T>(bytes->span());
+srl::serialization_context context;
 
-auto size = srl::serialized_size(value);
+auto bytes = srl::pack(value, context);
+auto copy = srl::extract<T>(bytes->span(), context);
+
+auto size = srl::serialized_size(value, context);
 srl::byte_buffer direct;
 direct.resize(*size);
-auto packed_into = srl::pack_into(direct.span(), value);
+auto packed_into = srl::pack_into(direct.span(), value, context);
 
 auto written = srl::write_block(path, bytes->span());
 auto read = srl::read_block(path);
 
-auto saved = srl::save(path, value);
-auto loaded = srl::load<T>(path);
+auto saved = srl::save(path, value, context);
+auto loaded = srl::load<T>(path, context);
 ```
 
 `write_block` 和 `read_block` 负责第 3、4 层转换；`save` 和 `load` 是它们与
 `pack`/`extract` 的组合接口。所有可恢复的输入和 IO 错误通过
 `std::expected<..., srl::error>` 返回。
+
+## Schema 可视化
+
+`schema_string<T>()` 在编译期遍历最终参与序列化的类型结构，并返回具有静态存储期的
+`std::string_view`。输出包含 record 字段 ID、转换后的存储类型、atomic 固定大小、容器
+元素布局和固定元素数量；无效 schema 会在编译期被拒绝。原子节点区分
+`primitive-atomic`、`codec-atomic` 和 `object-atomic`。进入原子模式的直接成员或基类使用
+`[atomic-root member]` / `[atomic-root base]`，原子对象内部继续包含的实体使用
+`[atomic member]` / `[atomic base]`。
+
+```cpp
+constexpr auto schema = srl::schema_string<Profile>();
+std::println("{}", schema);
+```
+
+类型模板参数会按 C++ 规则丢失 alias 身份。需要保留调用处的 alias 名时，直接传入类型反射：
+
+```cpp
+using ProfileAlias = Profile;
+constexpr auto schema = srl::schema_string<^^ProfileAlias>();
+```
+
+输出样式如下：
+
+```text
+record Profile {
+  [1] person: record Person {
+    [1] [atomic-root member] age: primitive-atomic int (size: 4 bytes)
+    [2] [atomic-root member] score: primitive-atomic double (size: 8 bytes)
+  }
+  [2] name: container std::string (count: dynamic) {
+    element: primitive-atomic char (size: 1 byte)
+  }
+  [3] [atomic-root member] active: primitive-atomic bool (size: 1 byte)
+  [4] [atomic-root member] state: primitive-atomic activity (size: 1 byte)
+  [5] position: record Vec2 {
+    [0] [atomic-root member] x: primitive-atomic float (size: 4 bytes)
+    [1] [atomic-root member] y: primitive-atomic float (size: 4 bytes)
+  }
+}
+```
+
+对象表示原子类型会进一步展示直接参与原子模式的成员和基类：
+
+```text
+object-atomic UniqueAtomic (size: 8 bytes, representation: direct) {
+  [atomic-root member] first: primitive-atomic unsigned int (size: 4 bytes)
+  [atomic-root member] second: primitive-atomic unsigned int (size: 4 bytes)
+}
+```

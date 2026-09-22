@@ -9,8 +9,7 @@
 
 namespace srl {
     static_assert(CHAR_BIT == 8, "srl requires 8-bit bytes");
-    static_assert(std::endian::native == std::endian::little,
-                  "srl only supports little-endian targets");
+    static_assert(std::endian::native == std::endian::little, "srl only supports little-endian targets");
 
     using id_type = std::uint32_t;
     using type_hash_type = std::uint32_t;
@@ -37,6 +36,7 @@ namespace srl {
         std::uint32_t size{};
         std::uint32_t mapping_count{};
 
+        //TODO use at pow of 2
         std::uint8_t mapping_align{};
         entry_kind kind{};
         mapping_kind mapping{};

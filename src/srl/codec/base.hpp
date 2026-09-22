@@ -1,23 +1,16 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <expected>
 #include <limits>
 #include <meta>
 #include <optional>
-#include <ranges>
 #include <span>
-#include <string>
 #include <string_view>
-#include <tuple>
 #include <type_traits>
-#include <utility>
-#include <vector>
 
 #include "../wire.hpp"
 
@@ -80,33 +73,16 @@ namespace srl {
                       "srl floating codecs require IEC 559 representation");
         static constexpr std::size_t fixed_size = sizeof(wire_type);
 
-        [[nodiscard]] static constexpr std::expected<std::size_t, error> encoded_size(
-            const T &) noexcept {
-            return fixed_size;
-        }
-
         [[nodiscard]] static std::expected<void, error> encode(
             const T &value,
-            std::span<std::byte> destination) noexcept {
-            if (destination.size() != fixed_size) {
-                return detail::fail(error_code::invalid_payload_shape);
-            }
-            if constexpr (std::same_as<T, bool>) {
-                detail::write_trivial(destination, static_cast<wire_type>(value ? 1 : 0));
-            } else if constexpr (std::is_enum_v<T>) {
-                detail::write_trivial(destination, static_cast<wire_type>(value));
-            } else {
-                detail::write_trivial(destination, value);
-            }
+            std::span<std::byte, fixed_size> destination) noexcept {
+            detail::write_trivial(destination, static_cast<wire_type>(value));
             return {};
         }
 
         [[nodiscard]] static std::expected<void, error> decode(
-            std::span<const std::byte> source,
+            std::span<const std::byte, fixed_size> source,
             T &out) noexcept {
-            if (source.size() != fixed_size) {
-                return detail::fail(error_code::invalid_payload_shape);
-            }
             const auto value = detail::read_trivial<wire_type>(source);
             if constexpr (std::same_as<T, bool>) {
                 if (value > 1) {
@@ -125,46 +101,19 @@ namespace srl {
         }
     };
 
-    template<>
-    struct atomic_codec<std::string> {
-        static constexpr std::size_t fixed_size = std::dynamic_extent;
-
-        [[nodiscard]] static std::expected<std::size_t, error> encoded_size(
-            const std::string &value) noexcept {
-            return value.size();
-        }
-
-        [[nodiscard]] static std::expected<void, error> encode(
-            const std::string &value,
-            std::span<std::byte> destination) noexcept {
-            if (destination.size() != value.size()) {
-                return detail::fail(error_code::invalid_payload_shape);
-            }
-            const auto source = std::as_bytes(std::span{value.data(), value.size()});
-            std::ranges::copy(source, destination.begin());
-            return {};
-        }
-
-        [[nodiscard]] static std::expected<void, error> decode(
-            std::span<const std::byte> source,
-            std::string &out) {
-            out.assign(reinterpret_cast<const char *>(source.data()), source.size());
-            return {};
-        }
-    };
-
     template<typename T>
-    concept atomic_serializable = requires(const codec_value_type<T> &value,
-                                           codec_value_type<T> &out,
-                                           std::span<std::byte> destination,
-                                           std::span<const std::byte> source) {
-        { atomic_codec<codec_value_type<T>>::fixed_size } -> std::convertible_to<std::size_t>;
-        { atomic_codec<codec_value_type<T>>::encoded_size(value) }
-            -> std::same_as<std::expected<std::size_t, error>>;
-        { atomic_codec<codec_value_type<T>>::encode(value, destination) }
-            -> std::same_as<std::expected<void, error>>;
-        { atomic_codec<codec_value_type<T>>::decode(source, out) }
-            -> std::same_as<std::expected<void, error>>;
+    concept atomic_serializable = requires {
+        typename std::integral_constant<
+            std::size_t,
+            atomic_codec<codec_value_type<T>>::fixed_size>;
+        requires (atomic_codec<codec_value_type<T>>::fixed_size != std::dynamic_extent);
+        static_cast<std::expected<void, error> (*)(
+            const codec_value_type<T> &,
+            std::span<std::byte, atomic_codec<codec_value_type<T>>::fixed_size>)>(
+            &atomic_codec<codec_value_type<T>>::encode);
+        static_cast<std::expected<void, error> (*)(
+            std::span<const std::byte, atomic_codec<codec_value_type<T>>::fixed_size>,
+            codec_value_type<T> &)>(
+            &atomic_codec<codec_value_type<T>>::decode);
     };
 }
-

@@ -1,22 +1,12 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
-#include <concepts>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
-#include <expected>
 #include <limits>
 #include <meta>
-#include <optional>
-#include <ranges>
 #include <span>
-#include <string>
-#include <string_view>
-#include <tuple>
 #include <type_traits>
-#include <utility>
 #include <vector>
 
 #include "../annotations.hpp"
@@ -28,6 +18,11 @@ namespace srl {
         enum class reflected_entity_kind : std::uint8_t {
             member = 1,
             base = 2,
+        };
+
+        struct byte_range {
+            std::size_t offset{};
+            std::size_t size{};
         };
 
         template<std::meta::info Entity>
@@ -50,7 +45,9 @@ namespace srl {
 
         template<std::meta::info Entity>
         consteval std::meta::info field_storage_type() {
-            if constexpr (conversion_count<Entity>() == 1) {
+            constexpr static auto count = conversion_count<Entity>();
+            static_assert(count <= 1);
+            if constexpr (count == 1) {
                 constexpr auto target = conversion_options<Entity>().target_type;
                 if constexpr (std::meta::is_type(target)) {
                     return target;
@@ -64,14 +61,6 @@ namespace srl {
 
         template<typename T, typename Visitor>
         constexpr void for_each_reflected_entity(Visitor &&visitor) {
-            static constexpr auto members = std::define_static_array(
-                std::meta::nonstatic_data_members_of(
-                    ^^T,
-                    std::meta::access_context::unchecked()));
-            template for (constexpr auto member: members) {
-                visitor.template operator()<member, reflected_entity_kind::member>();
-            }
-
             static constexpr auto bases = std::define_static_array(
                 std::meta::bases_of(
                     ^^T,
@@ -79,30 +68,189 @@ namespace srl {
             template for (constexpr auto base: bases) {
                 visitor.template operator()<base, reflected_entity_kind::base>();
             }
+
+            static constexpr auto members = std::define_static_array(
+                std::meta::nonstatic_data_members_of(
+                    ^^T,
+                    std::meta::access_context::unchecked()));
+            template for (constexpr auto member: members) {
+                visitor.template operator()<member, reflected_entity_kind::member>();
+            }
+        }
+
+        template<std::meta::info Entity>
+        consteval std::size_t transient_annotation_count() {
+            return std::meta::annotations_of_with_type(Entity, ^^tag::transient).size();
+        }
+
+        template<typename T>
+        consteval std::size_t auto_seq_annotation_count() {
+            if constexpr (!std::is_class_v<T>) {
+                return 0;
+            } else {
+                return std::meta::annotations_of_with_type(^^T, ^^tag::auto_seq).size();
+            }
         }
 
         template<typename T, typename Visitor>
         constexpr void for_each_serialized_entity(Visitor &&visitor) {
+            if constexpr (auto_seq_annotation_count<T>() == 1) {
+                std::uint64_t next_id{};
+                detail::for_each_reflected_entity<T>(
+                    [&]<std::meta::info Entity, reflected_entity_kind Kind> {
+                        if constexpr (transient_annotation_count<Entity>() == 0) {
+                            static constexpr auto annotations = std::define_static_array(
+                                std::meta::annotations_of_with_type(Entity, ^^tag::field));
+                            tag::field annotation{};
+                            if constexpr (annotations.size() == 1) {
+                                annotation = std::meta::extract<tag::field>(annotations.front());
+                                next_id = annotation.id;
+                            } else {
+                                annotation.id = next_id <= std::numeric_limits<id_type>::max()
+                                                    ? static_cast<id_type>(next_id)
+                                                    : id_type{};
+                            }
+                            visitor.template operator()<Entity, Kind>(annotation);
+                            ++next_id;
+                        }
+                    });
+            } else {
+                detail::for_each_reflected_entity<T>(
+                    [&]<std::meta::info Entity, reflected_entity_kind Kind> {
+                        static constexpr auto annotations = std::define_static_array(
+                            std::meta::annotations_of_with_type(Entity, ^^tag::field));
+                        if constexpr (annotations.size() == 1) {
+                            static constexpr auto annotation =
+                                std::meta::extract<tag::field>(annotations.front());
+                            visitor.template operator()<Entity, Kind>(annotation);
+                        }
+                    });
+            }
+        }
+
+        template<typename T>
+        consteval bool auto_seq_ids_representable() {
+            if constexpr (auto_seq_annotation_count<T>() != 1) {
+                return true;
+            } else {
+                std::uint64_t next_id{};
+                bool valid = true;
+                detail::for_each_reflected_entity<T>(
+                    [&]<std::meta::info Entity, reflected_entity_kind> {
+                        if constexpr (transient_annotation_count<Entity>() == 0) {
+                            static constexpr auto annotations = std::define_static_array(
+                                std::meta::annotations_of_with_type(Entity, ^^tag::field));
+                            if constexpr (annotations.size() == 1) {
+                                next_id = std::meta::extract<tag::field>(
+                                    annotations.front()).id;
+                            } else if (next_id > std::numeric_limits<id_type>::max()) {
+                                valid = false;
+                            }
+                            ++next_id;
+                        }
+                    });
+                return valid;
+            }
+        }
+
+        template<typename T, typename Visitor>
+        constexpr void for_each_atomic_entity(Visitor &&visitor) {
             detail::for_each_reflected_entity<T>(
                 [&]<std::meta::info Entity, reflected_entity_kind Kind> {
-                    static constexpr auto annotations = std::define_static_array(
-                        std::meta::annotations_of_with_type(Entity, ^^tag::field));
-                    if constexpr (annotations.size() == 1) {
-                        static constexpr auto annotation =
-                            std::meta::extract<tag::field>(annotations.front());
-                        visitor.template operator()<Entity, Kind>(annotation);
+                    if constexpr (transient_annotation_count<Entity>() == 0) {
+                        visitor.template operator()<Entity, Kind>();
                     }
                 });
         }
 
-        template<typename T, typename Visitor>
-        constexpr void for_each_atomic_member(Visitor &&visitor) {
-            static constexpr auto members = std::define_static_array(
-                std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unchecked()));
+        template<typename T>
+        consteval bool has_transient_members() {
+            bool found = false;
+            detail::for_each_reflected_entity<T>(
+                [&]<std::meta::info Entity, reflected_entity_kind Kind> {
+                    if constexpr (Kind == reflected_entity_kind::member
+                                  && transient_annotation_count<Entity>() != 0) {
+                        found = true;
+                    }
+                });
+            return found;
+        }
 
-            template for (constexpr auto member: members) {
-                visitor.template operator()<member>();
+        template<typename T>
+        consteval bool transient_layout_supports_segmented_copy() {
+            bool valid = true;
+            std::vector<byte_range> transient_ranges;
+            detail::for_each_reflected_entity<T>(
+                [&]<std::meta::info Entity, reflected_entity_kind Kind> {
+                    if constexpr (transient_annotation_count<Entity>() == 1) {
+                        if constexpr (Kind != reflected_entity_kind::member
+                                      || std::meta::is_bit_field(Entity)) {
+                            valid = false;
+                        } else {
+                            constexpr auto offset = std::meta::offset_of(Entity);
+                            if constexpr (offset.bits != 0) {
+                                valid = false;
+                            } else {
+                                transient_ranges.push_back({
+                                    static_cast<std::size_t>(offset.bytes),
+                                    std::meta::size_of(Entity),
+                                });
+                            }
+                        }
+                    }
+                });
+            if (!valid) {
+                return false;
             }
+
+            detail::for_each_reflected_entity<T>(
+                [&]<std::meta::info Entity, reflected_entity_kind> {
+                    if constexpr (transient_annotation_count<Entity>() == 0) {
+                        constexpr auto offset = std::meta::offset_of(Entity);
+                        constexpr auto begin = static_cast<std::size_t>(offset.bytes);
+                        constexpr auto end = begin + std::meta::size_of(Entity);
+                        if constexpr (offset.bits != 0) {
+                            valid = false;
+                        } else {
+                            for (const auto transient: transient_ranges) {
+                                const auto transient_end = transient.offset + transient.size;
+                                if (begin < transient_end && transient.offset < end) {
+                                    valid = false;
+                                }
+                            }
+                        }
+                    }
+                });
+            return valid;
+        }
+
+        template<typename T>
+        consteval auto atomic_copy_ranges() {
+            std::vector<byte_range> excluded;
+            detail::for_each_reflected_entity<T>(
+                [&]<std::meta::info Entity, reflected_entity_kind> {
+                    if constexpr (transient_annotation_count<Entity>() == 1) {
+                        constexpr auto offset = std::meta::offset_of(Entity);
+                        excluded.push_back({
+                            static_cast<std::size_t>(offset.bytes),
+                            std::meta::size_of(Entity),
+                        });
+                    }
+                });
+            std::ranges::sort(excluded, {}, &byte_range::offset);
+
+            std::vector<byte_range> result;
+            std::size_t begin{};
+            for (const auto range: excluded) {
+                if (begin < range.offset) {
+                    result.push_back({begin, range.offset - begin});
+                }
+                begin = std::max(begin, range.offset + range.size);
+            }
+            if (begin < sizeof(T)) {
+                result.push_back({begin, sizeof(T) - begin});
+            }
+            return std::define_static_array(result);
         }
 
         template<std::meta::info Entity, reflected_entity_kind Kind, typename Object>
@@ -112,16 +260,11 @@ namespace srl {
             } else {
                 using base_type = reflected_entity_value_t<Entity>;
                 if constexpr (std::is_const_v<Object>) {
-                    return static_cast<const base_type &>(object);
+                    return (const base_type &)object;
                 } else {
-                    return static_cast<base_type &>(object);
+                    return (base_type &)object;
                 }
             }
-        }
-
-        template<std::meta::info Entity, typename Object>
-        [[nodiscard]] constexpr decltype(auto) member_reference(Object &object) noexcept {
-            return (object.[:Entity:]);
         }
 
         template<typename T>
@@ -155,6 +298,22 @@ namespace srl {
         }
 
         template<typename T>
+        consteval std::size_t bypass_pointer_check_annotation_count() {
+            if constexpr (!std::is_class_v<T>) {
+                return 0;
+            } else {
+                return std::meta::annotations_of_with_type(
+                    ^^T, ^^tag::bypass_pointer_check).size();
+            }
+        }
+
+        template<std::meta::info Entity>
+        consteval std::size_t entity_bypass_pointer_check_annotation_count() {
+            return std::meta::annotations_of_with_type(
+                Entity, ^^tag::bypass_pointer_check).size();
+        }
+
+        template<typename T>
         consteval bool contains_pointer_representation() {
             using value_type = std::remove_cv_t<T>;
             if constexpr (std::is_pointer_v<value_type>
@@ -181,42 +340,59 @@ namespace srl {
         }
 
         template<typename T>
-        consteval bool direct_atomic_representation_supported(tag::atomic options) {
+        consteval bool direct_atomic_representation_supported(
+            tag::atomic options, bool bypass_pointer_check) {
             return std::is_trivially_copyable_v<T>
                    && (options.allow_padding
                        || std::has_unique_object_representations_v<T>)
-                   && (options.bypass_pointer_check
+                   && (bypass_pointer_check
                        || !contains_pointer_representation<T>());
         }
 
-        template<typename T>
-        consteval bool atomic_propagates_impl() {
-            using value_type = codec_value_type<T>;
-            if constexpr (atomic_annotation_count<value_type>() == 1) {
-                return atomic_options<value_type>().propagate;
+        template<typename Owner, std::meta::info Entity>
+        consteval bool entity_uses_forced_object_representation() {
+            using declared_type = reflected_entity_type_t<Entity>;
+            using value_type = reflected_entity_value_t<Entity>;
+            constexpr bool pointer_bypass =
+                bypass_pointer_check_annotation_count<Owner>() == 1
+                || entity_bypass_pointer_check_annotation_count<Entity>() == 1;
+            constexpr bool forced_atomic = field_atomic_annotation_count<Entity>() == 1;
+            if constexpr (std::is_reference_v<declared_type>
+                          || std::meta::is_bit_field(Entity)
+                          || conversion_count<Entity>() != 0
+                          || !std::meta::annotations_of_with_type(
+                                  Entity, ^^tag::container).empty()
+                          || (!forced_atomic
+                              && !(pointer_bypass
+                                   && contains_pointer_representation<value_type>()))) {
+                return false;
+            } else if constexpr (forced_atomic) {
+                return direct_atomic_representation_supported<value_type>(
+                    field_atomic_options<Entity>(), pointer_bypass);
             } else {
-                return atomic_serializable<value_type>;
+                return direct_atomic_representation_supported<value_type>(
+                    tag::atomic{}, true);
             }
         }
 
         template<typename T>
         consteval bool atomic_uses_direct_object_representation_impl() {
             static_assert(atomic_annotation_count<T>() == 1);
-            return atomic_options<T>().allow_padding
-                   || std::has_unique_object_representations_v<T>;
+            return !has_transient_members<T>()
+                   && (atomic_options<T>().allow_padding
+                       || std::has_unique_object_representations_v<T>);
         }
 
-        template<std::meta::info Entity>
-        consteval bool field_uses_forced_atomic_representation() {
-            if constexpr (field_atomic_annotation_count<Entity>() != 1) {
+        template<typename T>
+        consteval bool atomic_uses_segmented_object_representation_impl() {
+            if constexpr (!has_transient_members<T>()
+                          || !(atomic_options<T>().allow_padding
+                               || std::has_unique_object_representations_v<T>)
+                          || !std::is_trivially_copyable_v<T>
+                          || !transient_layout_supports_segmented_copy<T>()) {
                 return false;
             } else {
-                using declared_type = reflected_entity_type_t<Entity>;
-                using value_type = reflected_entity_value_t<Entity>;
-                return !std::is_reference_v<declared_type>
-                       && !std::meta::is_bit_field(Entity)
-                       && direct_atomic_representation_supported<value_type>(
-                           field_atomic_options<Entity>());
+                return true;
             }
         }
 
@@ -242,47 +418,50 @@ namespace srl {
                 return false;
             } else if constexpr (atomic_annotation_count<T>() != 1) {
                 return false;
-            } else if constexpr (!std::meta::bases_of(
-                                     ^^T,
-                                     std::meta::access_context::unchecked()).empty()) {
+            } else if constexpr (auto_seq_annotation_count<T>() != 0) {
                 return false;
-            } else if constexpr (atomic_uses_direct_object_representation_impl<T>()
-                                 && !std::is_trivially_copyable_v<T>) {
+            } else if constexpr (bypass_pointer_check_annotation_count<T>() > 1) {
                 return false;
-            } else if constexpr (atomic_uses_direct_object_representation_impl<T>()
-                                 && !atomic_options<T>().bypass_pointer_check
-                                 && contains_pointer_representation<T>()) {
+            } else if constexpr (!(atomic_uses_direct_object_representation_impl<T>()
+                                   || atomic_uses_segmented_object_representation_impl<T>())) {
+                return false;
+            } else if constexpr (!std::is_trivially_copyable_v<T>) {
                 return false;
             } else {
                 bool valid = true;
-                for_each_atomic_member<T>(
-                    [&]<std::meta::info Member> {
-                        using declared_type = reflected_entity_type_t<Member>;
-                        using value_type = reflected_entity_value_t<Member>;
-                        if constexpr (std::meta::is_bit_field(Member)
-                                      || std::is_reference_v<declared_type>
-                                      || !std::meta::annotations_of_with_type(Member, ^^tag::field).empty()
-                                      || !std::meta::annotations_of_with_type(Member, ^^tag::atomic).empty()
-                                      || conversion_count<Member>() != 0) {
+                detail::for_each_reflected_entity<T>(
+                    [&]<std::meta::info Entity, reflected_entity_kind Kind> {
+                        using declared_type = reflected_entity_type_t<Entity>;
+                        constexpr auto transient_count = transient_annotation_count<Entity>();
+                        constexpr auto bypass_count =
+                            entity_bypass_pointer_check_annotation_count<Entity>();
+                        if constexpr (transient_count > 1
+                                      || (transient_count == 1
+                                          && (Kind != reflected_entity_kind::member
+                                              || !std::meta::annotations_of_with_type(Entity, ^^tag::field).empty()
+                                              || !std::meta::annotations_of_with_type(Entity, ^^tag::atomic).empty()
+                                              || !std::meta::annotations_of_with_type(Entity, ^^tag::container).empty()
+                                              || bypass_count != 0
+                                              || conversion_count<Entity>() != 0))) {
                             valid = false;
-                        } else if constexpr (atomic_uses_direct_object_representation_impl<T>()) {
-                            if constexpr (std::is_pointer_v<value_type>) {
-                                if constexpr (!atomic_options<T>().bypass_pointer_check) {
-                                    valid = false;
-                                }
-                            } else if constexpr (!atomic_serializable<value_type>
-                                                 || !atomic_propagates_impl<value_type>()) {
-                                valid = false;
-                            }
-                        } else {
-                            if constexpr (std::is_pointer_v<value_type>
-                                          || !atomic_serializable<value_type>
-                                          || !atomic_propagates_impl<value_type>()) {
-                                valid = false;
-                            } else if constexpr (atomic_codec<value_type>::fixed_size
-                                                 == std::dynamic_extent) {
-                                valid = false;
-                            }
+                        } else if constexpr (transient_count == 1) {
+                            return;
+                        } else if constexpr (bypass_count > 1
+                                      || (Kind == reflected_entity_kind::base
+                                       && std::meta::is_virtual(Entity))
+                                      || (Kind == reflected_entity_kind::member
+                                          && (std::meta::is_bit_field(Entity)
+                                              || std::is_reference_v<declared_type>))
+                                      || !std::meta::annotations_of_with_type(Entity, ^^tag::field).empty()
+                                      || !std::meta::annotations_of_with_type(Entity, ^^tag::atomic).empty()
+                                      || !std::meta::annotations_of_with_type(Entity, ^^tag::container).empty()
+                                      || conversion_count<Entity>() != 0) {
+                            valid = false;
+                        } else if constexpr (contains_pointer_representation<
+                                                 reflected_entity_value_t<Entity>>()
+                                             && bypass_pointer_check_annotation_count<T>() == 0
+                                             && bypass_count == 0) {
+                            valid = false;
                         }
                     });
                 return valid;
@@ -290,4 +469,3 @@ namespace srl {
         }
     }
 }
-

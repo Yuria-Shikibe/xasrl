@@ -1,9 +1,9 @@
 #pragma once
 
 #include <concepts>
+#include <cstdint>
 #include <expected>
 #include <functional>
-#include <memory>
 #include <meta>
 #include <stdexcept>
 #include <type_traits>
@@ -24,7 +24,7 @@ namespace srl {
     }
 
     struct conversion_tag {
-        std::meta::info target_type;
+        std::meta::info target_type{};
         const void *handler_id = nullptr;
     };
 
@@ -43,8 +43,7 @@ namespace srl {
 
         template<typename MemTy, typename SrlTy>
         [[nodiscard]] bool matches() const noexcept {
-            return memory_type_ == handler_key<MemTy>()
-                   && storage_type_ == handler_key<SrlTy>();
+            return memory_type_ == handler_key<MemTy>() && storage_type_ == handler_key<SrlTy>();
         }
 
         virtual std::expected<void, error> mem2srl(const void *mem, void *srl) = 0;
@@ -58,11 +57,11 @@ namespace srl {
                       && std::same_as<SrlTy, std::remove_cv_t<SrlTy>>);
 
         std::expected<void, error> mem2srl(const void *mem, void *srl) final {
-            return to_storage(*static_cast<const MemTy *>(mem), *static_cast<SrlTy *>(srl));
+            return this->to_storage(*static_cast<const MemTy *>(mem), *static_cast<SrlTy *>(srl));
         }
 
         std::expected<void, error> srl2mem(void *mem, const void *srl) final {
-            return from_storage(*static_cast<MemTy *>(mem), *static_cast<const SrlTy *>(srl));
+            return this->from_storage(*static_cast<MemTy *>(mem), *static_cast<const SrlTy *>(srl));
         }
 
     protected:
@@ -73,16 +72,34 @@ namespace srl {
         virtual std::expected<void, error> from_storage(MemTy &mem, const SrlTy &srl) = 0;
     };
 
+    enum class duplicate_policy : std::uint8_t {
+        deduplicate,
+        reject,
+    };
+    struct srl_ctx_config {
+        duplicate_policy duplicates{duplicate_policy::deduplicate};
+
+    };
+
     class serialization_context {
-        std::unordered_map<const void *, std::reference_wrapper<context_reference_handler>> handlers_;
+    public:
+        srl_ctx_config config;
+
+    private:
+        std::unordered_map<const void *, context_reference_handler*> handlers_;
 
     public:
+        serialization_context() = default;
+
+        explicit serialization_context(duplicate_policy config) noexcept
+            : config(config) {}
+
         // Handlers and their services must outlive all operations using this context.
         void register_handler(const void *id, context_reference_handler &handler) {
             if (id == nullptr) {
                 throw std::invalid_argument("srl handler key must not be null");
             }
-            if (!handlers_.emplace(id, std::ref(handler)).second) {
+            if (!handlers_.emplace(id, &handler).second) {
                 throw std::logic_error("srl handler key is already registered");
             }
         }
@@ -93,8 +110,8 @@ namespace srl {
             if (found == handlers_.end()) {
                 throw std::logic_error("srl context is missing a required handler");
             }
-            auto &handler = found->second.get();
-            if (!handler.template matches<MemTy, SrlTy>()) {
+            auto &handler = *(found->second);
+            if (!handler.matches<MemTy, SrlTy>()) {
                 throw std::logic_error("srl handler memory/storage type mismatch");
             }
             return handler;

@@ -2,7 +2,7 @@
 
 #include <compare>
 
-#include "container.hpp"
+#include "context.hpp"
 #include "wire.hpp"
 
 namespace srl {
@@ -14,14 +14,17 @@ namespace srl {
         };
 
         struct atomic {
-            bool propagate{true};
             bool allow_padding{false};
-            bool bypass_pointer_check{false};
         };
+
+        struct auto_seq {};
+
+        struct bypass_pointer_check {};
+
+        struct transient {};
 
         struct container {
             duplicate_policy duplicates{duplicate_policy::deduplicate};
         };
     }
 }
-

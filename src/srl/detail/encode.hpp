@@ -13,7 +13,6 @@
 #include <ranges>
 #include <span>
 #include <string>
-#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -24,11 +23,11 @@
 
 namespace srl {
     namespace detail {
-        template<std::meta::info Entity>
+        template<typename Owner, std::meta::info Entity>
         [[nodiscard]] std::expected<void, error> encode_forced_atomic_field(
             std::span<std::byte> destination,
             const reflected_entity_value_t<Entity> &value) {
-            static_assert(field_uses_forced_atomic_representation<Entity>());
+            static_assert(entity_uses_forced_object_representation<Owner, Entity>());
             if (destination.size() != sizeof(value)) {
                 return fail(error_code::invalid_payload_shape);
             }
@@ -36,11 +35,11 @@ namespace srl {
             return {};
         }
 
-        template<std::meta::info Entity>
+        template<typename Owner, std::meta::info Entity>
         [[nodiscard]] std::expected<void, error> decode_forced_atomic_field(
             std::span<const std::byte> source,
             reflected_entity_value_t<Entity> &out) {
-            static_assert(field_uses_forced_atomic_representation<Entity>());
+            static_assert(entity_uses_forced_object_representation<Owner, Entity>());
             if (source.size() != sizeof(out)) {
                 return fail(error_code::invalid_payload_shape);
             }
@@ -48,7 +47,7 @@ namespace srl {
             return {};
         }
 
-        inline error locate_error(error failure, id_type id, std::uint32_t offset = 0) {
+        inline error locate_error(error failure, id_type id, std::uint32_t offset = 0) noexcept {
             if (failure.id == 0) {
                 failure.id = id;
             }
@@ -64,27 +63,19 @@ namespace srl {
         template<typename T>
             requires atomic_serializable<T>
         struct value_plan<T> {
-            std::size_t size{};
+            static constexpr std::size_t size = atomic_codec<T>::fixed_size;
 
-            std::expected<void, error> prepare(const T &value, const serialization_context &) {
-                auto measured = atomic_codec<T>::encoded_size(value);
-                if (!measured) {
-                    return std::unexpected{measured.error()};
-                }
-                if (*measured > std::numeric_limits<std::uint32_t>::max()) {
-                    return fail(error_code::entry_too_large);
-                }
-                size = *measured;
+            std::expected<void, error> prepare(const T &, const serialization_context &) {
                 return {};
             }
 
             std::expected<void, error> encode(std::span<std::byte> destination,
                                                const T &value) const {
-                return atomic_codec<T>::encode(value, destination);
+                return atomic_codec<T>::encode(value, destination.template first<size>());
             }
         };
 
-        template<std::meta::info Entity>
+        template<typename Owner, std::meta::info Entity>
         struct forced_field_plan {
             static constexpr std::size_t size = sizeof(reflected_entity_value_t<Entity>);
 
@@ -95,24 +86,26 @@ namespace srl {
 
             std::expected<void, error> encode(std::span<std::byte> destination,
                                                const reflected_entity_value_t<Entity> &value) const {
-                return encode_forced_atomic_field<Entity>(destination, value);
+                return encode_forced_atomic_field<Owner, Entity>(destination, value);
             }
         };
 
         struct no_conversion {};
 
-        template<std::meta::info Entity, reflected_entity_kind Kind>
+        template<typename Owner,
+                 std::meta::info Entity,
+                 reflected_entity_kind Kind,
+                 id_type Id>
         struct field_plan {
             using memory_type = reflected_entity_value_t<Entity>;
             using storage_type = field_storage_t<Entity>;
             static constexpr bool converted = conversion_count<Entity>() == 1;
-            static constexpr id_type id = std::meta::extract<tag::field>(
-                std::meta::annotations_of_with_type(Entity, ^^tag::field).front()).id;
+            static constexpr id_type id = Id;
 
             [[no_unique_address]] std::conditional_t<
                 converted, std::optional<storage_type>, no_conversion> storage;
-            std::conditional_t<field_atomic_annotation_count<Entity>() == 1,
-                               forced_field_plan<Entity>, value_plan<storage_type>> payload;
+            std::conditional_t<entity_uses_forced_object_representation<Owner, Entity>(),
+                               forced_field_plan<Owner, Entity>, value_plan<storage_type>> payload;
 
             template<typename T>
             std::expected<void, error> prepare(const T &object, const serialization_context &context) {
@@ -169,8 +162,10 @@ namespace srl {
 
         template<typename T, std::size_t... Index>
         auto record_fields_type(std::index_sequence<Index...>)
-            -> std::tuple<field_plan<planned_fields_v<T>[Index].entity,
-                                     planned_fields_v<T>[Index].kind>...>;
+            -> std::tuple<field_plan<T,
+                                     planned_fields_v<T>[Index].entity,
+                                     planned_fields_v<T>[Index].kind,
+                                     planned_fields_v<T>[Index].id>...>;
 
         template<typename T>
             requires (!atomic_serializable<T> && !container_serializable<T>)

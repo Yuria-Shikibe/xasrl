@@ -2,7 +2,6 @@
 
 #include <array>
 #include <cerrno>
-#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -130,29 +129,15 @@ namespace srl {
         return write_block(path, bytes->span());
     }
 
-    template<typename T, std::same_as<serialization_context> Context>
+    template<typename T>
         requires serializable<T> && std::default_initializable<codec_value_type<T>>
     [[nodiscard]] std::expected<codec_value_type<T>, error> load(
         const std::filesystem::path &path,
-        const Context &context,
-        decode_options options = {}) {
+        const serialization_context &context) {
         auto bytes = read_block(path);
         if (!bytes) {
             return std::unexpected{bytes.error()};
         }
-        return extract<T>(bytes->span(), context, options);
-    }
-
-    template<context_free_serializable T>
-    [[nodiscard]] std::expected<void, error> save(
-        const std::filesystem::path &path, const T &value) {
-        return save(path, value, serialization_context{});
-    }
-
-    template<context_free_serializable T>
-        requires std::default_initializable<codec_value_type<T>>
-    [[nodiscard]] std::expected<codec_value_type<T>, error> load(
-        const std::filesystem::path &path, decode_options options = {}) {
-        return load<T>(path, serialization_context{}, options);
+        return extract<T>(bytes->span(), context);
     }
 }
