@@ -10,7 +10,7 @@ registration, macros, or duplicated serialization boilerplate.
 
 - `src/srl/`: serialization library, currently centered on `core.hpp`.
 - `src/main.cpp`: executable experiments and usage examples.
-- `xmake.lua`: authoritative build configuration; current target: `untitled2`.
+- `xmake.lua`: authoritative build configuration; current target: `srl`.
 - `build/`, `.xmake/`, and `compile_commands.json`: generated outputs, not sources
   to edit manually.
 

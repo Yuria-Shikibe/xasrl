@@ -7,7 +7,9 @@
 namespace srl_test {
     inline const srl::serialization_context default_context;
     inline const srl::serialization_context rejecting_context{
-        srl::duplicate_policy::reject};
+        srl::srl_ctx_config{
+            .duplicates = srl::duplicate_policy::reject,
+        }};
 
     inline void require(bool condition, std::string_view description) {
         if (!condition) {

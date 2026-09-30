@@ -1,281 +1,178 @@
 #pragma once
 
 #include <cstddef>
+#include <iterator>
 #include <meta>
 #include <string>
 #include <string_view>
-#include <type_traits>
 
 #include "schema.hpp"
 
-namespace srl {
-    namespace detail {
-        consteval void append_schema_indent(std::string &out, std::size_t depth) {
-            out.append(depth * 2, ' ');
-        }
+namespace srl::detail {
+    consteval void append_schema_indent(std::string &out, std::size_t depth) {
+        out.append(depth * 2, ' ');
+    }
 
-        consteval void append_schema_unsigned(std::string &out, std::size_t value) {
-            //TODO use std::to_chars
-            char digits[sizeof(value) * 3]{};
-            auto cursor = std::end(digits);
-            do {
-                *--cursor = static_cast<char>('0' + value % 10);
-                value /= 10;
-            } while (value != 0);
-            out.append(cursor, std::end(digits));
-        }
+    consteval void append_schema_unsigned(std::string &out, std::size_t value) {
+        char digits[sizeof(value) * 3]{};
+        auto cursor = std::end(digits);
+        do {
+            *--cursor = static_cast<char>('0' + value % 10);
+            value /= 10;
+        } while (value != 0);
+        out.append(cursor, std::end(digits));
+    }
 
-        template<std::meta::info Type>
-        consteval std::string_view schema_type_name() {
-            if constexpr (std::meta::is_same_type(Type, ^^std::string)){
-                return std::meta::display_string_of(^^std::string);
-            } else {
-                return std::meta::display_string_of(Type);
+    consteval std::string_view schema_type_name(std::meta::info type) {
+        return std::meta::display_string_of(std::meta::is_same_type(type, ^^std::string) ? ^^std::string : type);
+    }
+
+    consteval void append_schema_entity_name(std::string &out, std::meta::info entity) {
+        if (std::meta::is_base(entity)) {
+            out.append("base<");
+            out.append(schema_type_name(std::meta::type_of(entity)));
+            out.push_back('>');
+        } else {
+            out.append(std::meta::identifier_of(entity));
+        }
+    }
+
+    // Atomic object members explain the representation; they are not wire children.
+    consteval void append_atomic_schema(std::string &out, const schema_node &node,
+                                       std::meta::info display_type, std::size_t depth, bool atomic_root) {
+        const auto type = node.type;
+        const bool object = node.representation != atomic_representation::codec;
+        const bool forced = node.representation == atomic_representation::forced;
+        if (forced) {
+            out.append("object-atomic ");
+        } else if (std::meta::is_arithmetic_type(type) || std::meta::is_enum_type(type)) {
+            out.append("primitive-atom ");
+        } else {
+            out.append(object ? "object-atom " : "codec-atom ");
+        }
+        out.append(schema_type_name(display_type));
+        out.append(" (size: ");
+        append_schema_unsigned(out, node.encode_extent);
+        out.append(node.encode_extent == 1 ? " byte" : " bytes");
+        if (object) {
+            out.append(", representation: ");
+            out.append(forced ? "forced-direct" : node.representation == atomic_representation::direct ? "direct" : "segmented");
+        }
+        out.push_back(')');
+        if (!object || (!std::meta::is_class_type(type) && !std::meta::is_union_type(type))) {
+            return;
+        }
+        out.append(" {\n");
+        for (auto entity: schema_entities(type)) {
+            if (!forced && annotation_count(entity, ^^tag::transient) != 0) {
+                continue;
             }
-        }
-
-        template<typename T, std::meta::info DisplayType = ^^T>
-        consteval void append_schema_node(
-            std::string &out,
-            std::size_t depth,
-            bool atomic_root = true);
-
-        template<typename T, std::meta::info DisplayType>
-        consteval void append_atomic_schema(
-            std::string &out,
-            std::size_t depth,
-            bool atomic_root) {
-            using value_type = codec_value_type<T>;
-            if constexpr (primitive<value_type>) {
-                out.append("primitive-atom ");
-            } else if constexpr (auto_atomic_supported<value_type>()) {
-                out.append("object-atom ");
+            const bool base = std::meta::is_base(entity);
+            append_schema_indent(out, depth + 1);
+            if (forced) {
+                out.append(base ? "[atomic base] " : "[atomic member] ");
             } else {
-                out.append("codec-atom ");
+                out.append(atomic_root ? "[atom-root " : "[atom ");
+                out.append(base ? "base] " : "memb] ");
             }
-            out.append(schema_type_name<DisplayType>());
-            out.append(" (size: ");
-            constexpr auto fixed_size = atomic_codec<value_type>::fixed_size;
-            detail::append_schema_unsigned(out, fixed_size);
-            out.append(fixed_size == 1 ? " byte" : " bytes");
-            if constexpr (auto_atomic_supported<value_type>()) {
-                if constexpr (atomic_codec<value_type>::uses_direct_object_representation) {
-                    out.append(", representation: direct)");
+            append_schema_entity_name(out, entity);
+            out.append(": ");
+            const auto child_type = std::meta::remove_cvref(std::meta::type_of(entity));
+            if (forced) {
+                out.append(schema_type_name(std::meta::type_of(entity)));
+            } else {
+                const auto facts = schema_facts(child_type);
+                if (facts.atomic) {
+                    schema_node child{.kind = schema_kind::atomic, .type = child_type};
+                    child.encode_extent = facts.extent;
+                    child.representation = facts.representation;
+                    append_atomic_schema(out, child, std::meta::type_of(entity), depth + 1, false);
                 } else {
-                    static_assert(atomic_codec<value_type>::uses_segmented_object_representation);
-                    out.append(", representation: segmented)");
+                    out.append(schema_type_name(std::meta::type_of(entity)));
                 }
-                out.append(" {\n");
-                detail::for_each_atomic_entity<value_type>(
-                    [&]<std::meta::info Entity, reflected_entity_kind Kind> {
-                        using entity_type = reflected_entity_value_t<Entity>;
-                        append_schema_indent(out, depth + 1);
-                        out.append(atomic_root ? "[atom-root " : "[atom ");
-                        out.append(Kind == reflected_entity_kind::member ? "memb] " : "base] ");
-                        if constexpr (Kind == reflected_entity_kind::member) {
-                            out.append(std::meta::identifier_of(Entity));
-                        } else {
-                            out.append("base<");
-                            out.append(std::meta::display_string_of(std::meta::type_of(Entity)));
-                            out.push_back('>');
-                        }
-                        out.append(": ");
-                        if constexpr (atomic_serializable<entity_type>) {
-                            append_atomic_schema<entity_type, std::meta::type_of(Entity)>(
-                                out, depth + 1, false);
-                        } else {
-                            out.append(std::meta::display_string_of(std::meta::type_of(Entity)));
-                        }
-                        out.push_back('\n');
-                    });
-                append_schema_indent(out, depth);
-                out.push_back('}');
-            } else {
-                out.push_back(')');
             }
+            out.push_back('\n');
         }
+        append_schema_indent(out, depth);
+        out.push_back('}');
+    }
 
-        template<typename T, std::meta::info DisplayType>
-        consteval void append_container_schema(std::string &out, std::size_t depth) {
-            using value_type = codec_value_type<T>;
-            using traits = container_traits<value_type>;
-            out.append("container ");
-            out.append(schema_type_name<DisplayType>());
+    consteval void append_schema_node(std::string &out, const schema_tree &tree, std::size_t index,
+                                     std::meta::info display_type, std::size_t depth, bool atomic_root = true) {
+        const auto &node = tree.node(index);
+        if (node.kind == schema_kind::atomic) {
+            append_atomic_schema(out, node, display_type, depth, atomic_root);
+            return;
+        }
+        const bool container = node.kind == schema_kind::container;
+        out.append(container ? "container " : node.kind == schema_kind::stream ? "stream " : "record ");
+        out.append(schema_type_name(display_type));
+        if (container) {
             out.append(" (count: ");
-            if constexpr (traits::fixed_size == std::dynamic_extent) {
+            if (node.element_count == std::dynamic_extent) {
                 out.append("dynamic");
             } else {
-                detail::append_schema_unsigned(out, traits::fixed_size);
+                append_schema_unsigned(out, node.element_count);
             }
-            out.append(") {\n");
-            if constexpr (traits::mapping_group_size == 1) {
-                append_schema_indent(out, depth + 1);
-                out.append("element: ");
-                append_schema_node<typename traits::element_type>(out, depth + 1);
-                out.push_back('\n');
+            out.push_back(')');
+        }
+        out.append(" {\n");
+        std::size_t position{};
+        for (auto child_index: tree.children(index)) {
+            const auto &child = tree.node(child_index);
+            append_schema_indent(out, depth + 1);
+            if (container) {
+                out.append(child.role == schema_role::element ? "element: " : child.role == schema_role::key ? "key: " : "value: ");
+                append_schema_node(out, tree, child_index, child.type, depth + 1);
             } else {
-                append_schema_indent(out, depth + 1);
-                out.append("key: ");
-                append_schema_node<typename traits::key_type>(out, depth + 1);
-                out.push_back('\n');
-                append_schema_indent(out, depth + 1);
-                out.append("value: ");
-                append_schema_node<typename traits::mapped_type>(out, depth + 1);
-                out.push_back('\n');
-            }
-            append_schema_indent(out, depth);
-            out.push_back('}');
-        }
-
-        template<typename Owner, std::meta::info Entity>
-        consteval bool field_uses_atomic_mode() {
-            using storage_type = field_storage_t<Entity>;
-            return entity_uses_forced_object_representation<Owner, Entity>()
-                   || atomic_serializable<storage_type>;
-        }
-
-        template<typename T, std::meta::info DisplayType>
-        consteval void append_forced_atomic_schema(std::string &out, std::size_t depth) {
-            out.append("object-atomic ");
-            out.append(schema_type_name<DisplayType>());
-            out.append(" (size: ");
-            append_schema_unsigned(out, sizeof(T));
-            out.append(sizeof(T) == 1
-                           ? " byte, representation: forced-direct)"
-                           : " bytes, representation: forced-direct)");
-            if constexpr (std::is_class_v<T> || std::is_union_v<T>) {
-                out.append(" {\n");
-                detail::for_each_reflected_entity<T>(
-                    [&]<std::meta::info Child, reflected_entity_kind Kind> {
-                        append_schema_indent(out, depth + 1);
-                        //TODO use enum to string instead
-                        out.append(Kind == reflected_entity_kind::member
-                                       ? "[atomic member] "
-                                       : "[atomic base] ");
-                        if constexpr (Kind == reflected_entity_kind::member) {
-                            out.append(std::meta::identifier_of(Child));
-                        } else {
-                            out.append("base<");
-                            out.append(std::meta::display_string_of(std::meta::type_of(Child)));
-                            out.push_back('>');
-                        }
-                        out.append(": ");
-                        out.append(std::meta::display_string_of(std::meta::type_of(Child)));
-                        out.push_back('\n');
-                    });
-                append_schema_indent(out, depth);
-                out.push_back('}');
-            }
-        }
-
-        template<typename Owner, std::meta::info Entity>
-        consteval void append_field_schema(std::string &out, std::size_t depth) {
-            using memory_type = reflected_entity_value_t<Entity>;
-            using storage_type = field_storage_t<Entity>;
-            if constexpr (entity_uses_forced_object_representation<Owner, Entity>()) {
-                append_forced_atomic_schema<memory_type, std::meta::type_of(Entity)>(out, depth);
-            } else {
-                static constexpr auto storage_info = [] consteval {
-                    if constexpr (conversion_count<Entity>() == 1) {
-                        return conversion_options<Entity>().target_type;
-                    } else {
-                        return std::meta::type_of(Entity);
-                    }
-                }();
-                append_schema_node<storage_type, storage_info>(out, depth, false);
-                if constexpr (!std::same_as<memory_type, storage_type>) {
-                    out.append(" <- ");
-                    out.append(schema_type_name<std::meta::type_of(Entity)>());
+                out.push_back('[');
+                if (node.kind == schema_kind::stream) {
+                    out.append("position ");
+                    append_schema_unsigned(out, position);
+                } else {
+                    append_schema_unsigned(out, child.id);
                 }
-            }
-
-            static constexpr auto container_annotations = std::define_static_array(
-                std::meta::annotations_of_with_type(Entity, ^^tag::container));
-            if constexpr (container_annotations.size() == 1) {
-                constexpr auto options = std::meta::extract<tag::container>(
-                    container_annotations.front());
-                if constexpr (options.duplicates == duplicate_policy::reject) {
+                ++position;
+                out.append("] ");
+                if (child.kind == schema_kind::atomic) {
+                    out.append(child.role == schema_role::base ? "[atom-root base] " : "[atom-root memb] ");
+                }
+                append_schema_entity_name(out, child.entity);
+                out.append(": ");
+                append_schema_node(out, tree, child_index,
+                    child.converted() ? child.conversion.target_type : std::meta::type_of(child.entity), depth + 1, false);
+                if (child.converted() && !std::meta::is_same_type(child.memory_type, child.type)) {
+                    out.append(" <- ");
+                    out.append(schema_type_name(std::meta::type_of(child.entity)));
+                }
+                if (child.duplicates == schema_duplicates::reject) {
                     out.append(" [duplicates: reject]");
                 }
             }
+            out.push_back('\n');
         }
-
-        template<typename T, std::meta::info DisplayType>
-        consteval void append_record_schema(std::string &out, std::size_t depth) {
-            using value_type = codec_value_type<T>;
-            out.append("record ");
-            out.append(schema_type_name<DisplayType>());
-            out.append(" {\n");
-            detail::for_each_serialized_entity<value_type>(
-                [&]<std::meta::info Entity, reflected_entity_kind Kind>(tag::field field) {
-                    append_schema_indent(out, depth + 1);
-                    out.push_back('[');
-                    append_schema_unsigned(out, field.id);
-                    out.append("] ");
-                    if constexpr (field_uses_atomic_mode<value_type, Entity>()) {
-                        out.append(Kind == reflected_entity_kind::member
-                                       ? "[atom-root memb] "
-                                       : "[atom-root base] ");
-                    }
-                    if constexpr (Kind == reflected_entity_kind::member) {
-                        out.append(std::meta::identifier_of(Entity));
-                    } else {
-                        out.append("base<");
-                        out.append(std::meta::display_string_of(std::meta::type_of(Entity)));
-                        out.push_back('>');
-                    }
-                    out.append(": ");
-                    append_field_schema<value_type, Entity>(out, depth + 1);
-                    out.push_back('\n');
-                });
-            append_schema_indent(out, depth);
-            out.push_back('}');
-        }
-
-        template<typename T, std::meta::info DisplayType>
-        consteval void append_schema_node(
-            std::string &out,
-            std::size_t depth,
-            bool atomic_root) {
-            using value_type = codec_value_type<T>;
-            if constexpr (atomic_serializable<value_type>) {
-                append_atomic_schema<T, DisplayType>(out, depth, atomic_root);
-            } else if constexpr (container_serializable<value_type>) {
-                append_container_schema<T, DisplayType>(out, depth);
-            } else {
-                static_assert(reflected_record<value_type>);
-                append_record_schema<T, DisplayType>(out, depth);
-            }
-        }
-
-        struct static_schema_string {
-            const char *data;
-            std::size_t size;
-        };
-
-        template<std::meta::info Type>
-        consteval static_schema_string make_schema_string() {
-            static_assert(std::meta::is_type(Type), "schema visualization requires a type reflection");
-            using T = typename[:Type:];
-            static_assert(schema_valid<T>(), "cannot visualize an invalid serialization schema");
-            std::string result;
-            append_schema_node<T, Type>(result, 0);
-            return {
-                .data = std::define_static_string(result),
-                .size = result.size(),
-            };
-        }
+        append_schema_indent(out, depth);
+        out.push_back('}');
     }
 
+    consteval std::string_view make_schema_string(const schema_tree &tree, std::meta::info display_type) {
+        std::string result;
+        append_schema_node(result, tree, tree.child(tree.root, 0), display_type, 0);
+        return {std::define_static_string(result), result.size()};
+    }
+}
+
+namespace srl {
     template<std::meta::info Type>
         requires (std::meta::is_type(Type))
-    [[nodiscard]] consteval std::string_view schema_string() noexcept {
-        static constexpr auto storage = detail::make_schema_string<Type>();
-        return {storage.data, storage.size};
+    [[nodiscard]] consteval std::string_view schema_string() {
+        using T = typename[:Type:];
+        static_assert(schema<T>::valid, "cannot visualize an invalid serialization schema");
+        return detail::make_schema_string(schema<T>::tree, Type);
     }
 
     template<typename T>
-    [[nodiscard]] consteval std::string_view schema_string() noexcept {
+    [[nodiscard]] consteval std::string_view schema_string() {
         return schema_string<^^T>();
     }
 }

@@ -210,13 +210,13 @@ namespace srl {
     struct atomic_codec<RuntimeFixedSize> {
         static inline std::size_t fixed_size = 0;
 
-        [[nodiscard]] static std::expected<void, error> encode(
+        [[nodiscard]] static error encode(
             const RuntimeFixedSize &,
             std::span<std::byte>) noexcept {
             return {};
         }
 
-        [[nodiscard]] static std::expected<void, error> decode(
+        [[nodiscard]] static error decode(
             std::span<const std::byte>,
             RuntimeFixedSize &) noexcept {
             return {};
@@ -227,13 +227,13 @@ namespace srl {
     struct atomic_codec<DynamicSpanCodec> {
         static constexpr std::size_t fixed_size = 0;
 
-        [[nodiscard]] static std::expected<void, error> encode(
+        [[nodiscard]] static error encode(
             const DynamicSpanCodec &,
             std::span<std::byte>) noexcept {
             return {};
         }
 
-        [[nodiscard]] static std::expected<void, error> decode(
+        [[nodiscard]] static error decode(
             std::span<const std::byte>,
             DynamicSpanCodec &) noexcept {
             return {};

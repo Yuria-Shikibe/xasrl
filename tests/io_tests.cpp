@@ -14,7 +14,7 @@ namespace srl_test {
             .position = Vec2{.x = 3.0f, .y = 6.0f},
         };
         const auto saved = srl::save(path, profile, default_context);
-        require(saved.has_value(), "save failed");
+        require(!saved, "save failed");
 
         const auto block = srl::read_block(path);
         require(block.has_value(), "read_block failed");
@@ -34,13 +34,13 @@ namespace srl_test {
                       srl::error_code::invalid_storage_magic,
                       "invalid storage magic was accepted");
 
-        require(srl::save(path, profile, default_context).has_value(), "failed to restore test block");
+        require(!srl::save(path, profile, default_context), "failed to restore test block");
         set_file_byte(path, 8, std::byte{1});
         require_error(srl::read_block(path),
                       srl::error_code::unsupported_storage_version,
                       "unsupported storage version was accepted");
 
-        require(srl::save(path, profile, default_context).has_value(), "failed to restore test block");
+        require(!srl::save(path, profile, default_context), "failed to restore test block");
         set_file_byte(path, 12, std::byte{1});
         require_error(srl::read_block(path),
                       srl::error_code::unsupported_compression,

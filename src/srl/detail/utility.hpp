@@ -16,6 +16,9 @@
 #include "../types.hpp"
 
 namespace srl {
+    //TODO add support for enum bit flag check, hint flag by if operator & or | is enabled, or explicitly declared.
+
+
     template<typename Enum>
         requires std::is_enum_v<Enum>
     [[nodiscard]] constexpr std::string_view enum_name(Enum value) noexcept {
@@ -32,6 +35,7 @@ namespace srl {
     template<typename Enum>
         requires std::is_enum_v<Enum>
     [[nodiscard]] constexpr bool enum_contains(std::underlying_type_t<Enum> value) noexcept {
+        //TODO optimize for contiguous enum(range bound check) or dense enum(bit set check)
         static constexpr auto enumerators = std::define_static_array(
             std::meta::enumerators_of(^^Enum));
         template for (constexpr auto enumerator: enumerators) {
@@ -41,6 +45,12 @@ namespace srl {
             }
         }
         return false;
+    }
+
+    template<typename Enum>
+        requires std::is_enum_v<Enum>
+    [[nodiscard]] constexpr bool enum_contains(Enum value) noexcept {
+        return srl::enum_contains<Enum>(std::to_underlying(value));
     }
 
     [[nodiscard]] constexpr std::string_view message(error_code code) noexcept {
@@ -59,17 +69,17 @@ namespace srl {
         constexpr type_hash_type fnv1a32_offset = 2166136261u;
         constexpr type_hash_type fnv1a32_prime = 16777619u;
 
-        [[nodiscard]] constexpr std::unexpected<error> fail(
+        [[nodiscard]] constexpr error fail(
             error_code code,
             id_type id = 0,
             std::uint32_t offset = 0,
             std::error_code system_error = {}) noexcept {
-            return std::unexpected{error{
+            return error{
                 .code = code,
                 .id = id,
                 .offset = offset,
                 .system_error = system_error,
-            }};
+            };
         }
 
         template<typename T>
@@ -96,7 +106,7 @@ namespace srl {
                 std::memcpy(std::addressof(result.value), source.data(), sizeof(T));
                 return result.value;
             } else {
-                std::array<std::byte, sizeof(T)> representation{};
+                alignas(T) std::array<std::byte, sizeof(T)> representation{};
                 std::memcpy(representation.data(), source.data(), sizeof(T));
                 return std::bit_cast<T>(representation);
             }
@@ -114,4 +124,3 @@ namespace srl {
         }
     }
 }
-

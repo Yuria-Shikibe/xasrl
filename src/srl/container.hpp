@@ -123,7 +123,7 @@ namespace srl {
                                     && !std::ranges::view<T>
                                     && std::ranges::forward_range<decltype(detail::container_range(std::declval<const T &>()))>
                                     && (container_traits<T>::mapping_group_size == 1 || container_traits<T>::mapping_group_size == 2)
-                                    && (fixed_container<T> | (clearable_container<T>  && (insert_after_container<T> || ordinary_insertable_container<T>)));
+                                    && (fixed_container<T> || (clearable_container<T>  && (insert_after_container<T> || ordinary_insertable_container<T>)));
 
         template<typename T>
         void clear_container(T &value) {

@@ -11,7 +11,7 @@
 #include <span>
 #include <system_error>
 
-#include "core.hpp"
+#include "serialization.hpp"
 
 namespace srl {
     namespace detail {
@@ -20,11 +20,11 @@ namespace srl {
         }
     }
 
-    [[nodiscard]] inline std::expected<void, error> write_block(
+    [[nodiscard]] inline error write_block(
         const std::filesystem::path &path,
         std::span<const std::byte> entry_bytes) {
         if (auto entry = detail::parse_entry(entry_bytes); !entry) {
-            return std::unexpected{entry.error()};
+            return entry.error();
         }
 
         std::ofstream output(path, std::ios::binary | std::ios::trunc);
@@ -62,44 +62,44 @@ namespace srl {
         const std::filesystem::path &path) {
         std::ifstream input(path, std::ios::binary | std::ios::ate);
         if (!input.is_open()) {
-            return detail::fail(error_code::io_open_failed, 0, 0, detail::current_io_error());
+            return std::unexpected{detail::fail(error_code::io_open_failed, 0, 0, detail::current_io_error())};
         }
 
         const auto end = input.tellg();
         if (end < 0) {
-            return detail::fail(error_code::io_seek_failed, 0, 0, detail::current_io_error());
+            return std::unexpected{detail::fail(error_code::io_seek_failed, 0, 0, detail::current_io_error())};
         }
         const auto file_size = static_cast<std::uint64_t>(end);
         if (file_size < detail::storage_head_wire_size) {
-            return detail::fail(error_code::invalid_storage_magic);
+            return std::unexpected{detail::fail(error_code::invalid_storage_magic)};
         }
         if (file_size > static_cast<std::uint64_t>(detail::storage_head_wire_size)
                             + std::numeric_limits<std::uint32_t>::max()) {
-            return detail::fail(error_code::file_too_large);
+            return std::unexpected{detail::fail(error_code::file_too_large)};
         }
 
         input.seekg(0, std::ios::beg);
         if (!input) {
-            return detail::fail(error_code::io_seek_failed, 0, 0, detail::current_io_error());
+            return std::unexpected{detail::fail(error_code::io_seek_failed, 0, 0, detail::current_io_error())};
         }
 
         std::array<std::byte, detail::storage_head_wire_size> header{};
         input.read(reinterpret_cast<char *>(header.data()),
                    static_cast<std::streamsize>(header.size()));
         if (!input || input.gcount() != static_cast<std::streamsize>(header.size())) {
-            return detail::fail(error_code::io_read_failed, 0, 0, detail::current_io_error());
+            return std::unexpected{detail::fail(error_code::io_read_failed, 0, 0, detail::current_io_error())};
         }
         const auto storage = detail::read_trivial<storage_head>(
             std::span<const std::byte>{header});
 
         if (storage.magic_number != detail::storage_magic) {
-            return detail::fail(error_code::invalid_storage_magic);
+            return std::unexpected{detail::fail(error_code::invalid_storage_magic)};
         }
         if (storage.version != detail::storage_version) {
-            return detail::fail(error_code::unsupported_storage_version);
+            return std::unexpected{detail::fail(error_code::unsupported_storage_version)};
         }
         if (storage.compress_tag__cap_only != detail::compression_none) {
-            return detail::fail(error_code::unsupported_compression);
+            return std::unexpected{detail::fail(error_code::unsupported_compression)};
         }
 
         byte_buffer entry_bytes;
@@ -108,7 +108,7 @@ namespace srl {
             input.read(reinterpret_cast<char *>(entry_bytes.data()),
                        static_cast<std::streamsize>(entry_bytes.size()));
             if (!input || input.gcount() != static_cast<std::streamsize>(entry_bytes.size())) {
-                return detail::fail(error_code::io_read_failed, 0, 0, detail::current_io_error());
+                return std::unexpected{detail::fail(error_code::io_read_failed, 0, 0, detail::current_io_error())};
             }
         }
         if (auto entry = detail::parse_entry(entry_bytes.span()); !entry) {
@@ -118,13 +118,13 @@ namespace srl {
     }
 
     template<serializable T>
-    [[nodiscard]] std::expected<void, error> save(
+    [[nodiscard]] error save(
         const std::filesystem::path &path,
         const T &value,
         const serialization_context &context) {
         auto bytes = pack(value, context);
         if (!bytes) {
-            return std::unexpected{bytes.error()};
+            return bytes.error();
         }
         return write_block(path, bytes->span());
     }

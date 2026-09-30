@@ -18,6 +18,7 @@ namespace srl {
         atomic = 1,
         record = 2,
         container = 3,
+        stream = 4,
     };
 
     enum class mapping_kind : std::uint8_t {
@@ -36,7 +37,7 @@ namespace srl {
         std::uint32_t size{};
         std::uint32_t mapping_count{};
 
-        //TODO use at pow of 2
+        //TODO use at pow of 2, 0 for 1; 1 for 2; 2 for 4; 3 for 8; ...
         std::uint8_t mapping_align{};
         entry_kind kind{};
         mapping_kind mapping{};
@@ -104,6 +105,23 @@ namespace srl {
         id_type id{};
         std::uint32_t offset{};
         std::error_code system_error{};
+
+        [[nodiscard]] constexpr explicit operator bool() const noexcept {
+            return code != error_code::none;
+        }
+
+        constexpr error& set_id(id_type value) noexcept {
+            if (id == 0 && value != 0) {
+                id = value;
+            }
+            return *this;
+        }
+
+        constexpr error& set_offset(std::uint32_t value) noexcept {
+            if (offset == 0 && value != 0) {
+                offset = value;
+            }
+            return *this;
+        }
     };
 }
-

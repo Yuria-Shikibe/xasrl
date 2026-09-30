@@ -10,10 +10,12 @@
 - `context.hpp`：引用转换 handler 与序列化上下文。
 - `codec/base.hpp`：`atomic_codec` 接口及基础类型特化。
 - `codec/reflected.hpp`：由对象表示自动生成的原子 codec 特化。
-- `schema.hpp`：可序列化概念、schema 静态校验和上下文需求分析。
+- `schema.hpp`：可序列化概念、`schema<T>` 编译期查询入口和静态校验。
+- `schema/model.hpp`：schema 节点、树视图及非模板查询接口。
+- `schema/build.hpp`：非模板 `consteval` 树构建、注解校验及尺寸计算。
+- `schema_visualization.hpp`：基于 schema 树生成结构文本。
 - `detail/reflection.hpp`：纯反射遍历、注解读取与类型分析工具。
-- `detail/encode.hpp`：记录、容器和根节点的编码计划实现。
-- `detail/decode.hpp`：记录、容器和原子值的解码实现。
+- `detail/codec.hpp`：按节点类型集中组织编解码；`value_codec`、`field_codec` 和 `root_codec` 通过嵌套 `encode_plan` 管理编码缓存，通过静态 `decode` 解码。
 - `detail/utility.hpp`：无状态 wire、枚举、哈希和 trivial byte 工具。
 - `detail/wire_parse.hpp`：已验证 entry 视图与 wire 解析。
 - `storage/byte_buffer.hpp`：序列化结果使用的字节缓冲。
@@ -80,6 +82,49 @@ struct [[=srl::tag::auto_seq{}]] State : Base {
 };
 ```
 
+### 顺序流模式
+
+`auto_stream` 按直接基类声明顺序、再按成员声明顺序编码所有非 `transient` 实体。
+布局由反射得到的类型和字段编码规则决定，不是 C++ 对象的内存布局。
+与 `auto_seq` 不同，它忽略内部的 `field{id}`，不排序、不生成字段 ID 或偏移表。
+
+```cpp
+struct Plain {
+    std::uint32_t count{};
+    std::string name;
+};
+
+struct [[=srl::tag::auto_stream{}]] State
+    : [[=srl::tag::auto_stream{}]] Plain {
+    [[=srl::tag::auto_stream{}]] Plain detail;
+    bool active{};
+    [[=srl::tag::transient{}]] void *cache{};
+};
+```
+
+注解可以放在类型、字段或直接基类上。字段／基类注解只覆盖当前位置的子对象，
+允许普通未标注类、显式 record 和 `auto_seq` 类；不会递归改变更深层类型的编码。
+显式 record 的父字段仍需要 `field{id}`，该 ID 属于父 record。
+局部覆盖不支持 atomic 类型、自定义 atomic codec 类型、容器或非类类型。
+类型级 `auto_stream` 与 `auto_seq`、`atomic` 互斥；字段级注解不能与
+`atomic`、`container`、`transient` 或 `bypass_pointer_check` 同时使用。
+与 `conversion_tag` 同时使用时，stream 模式应用于转换后的持久化类型。
+
+wire 使用现有 16 字节 `entry_head`，`kind = stream (4)`、`mapping = none`、
+`mapping_count = 0`、`mapping_group_size = 0`，随后直接拼接各实体 payload。
+原子字段按 codec 固定长度读取，复合字段通过自己的 entry header 确定长度，
+容器保留原有元素映射。每个 stream 相比具有相同 payload 的 `auto_seq` 每字段减少
+8 字节。字节序和 storage version 沿用现有格式，旧读者不识别新 kind。
+
+调用方必须保证读写布局一致。不记录 schema 指纹，也不通过类型名哈希约束 stream
+布局匹配；同长度字段换序等错误可能无法检测。截断、越界及尾随字节返回可恢复错误。
+没有未知字段跳过或缺失字段补齐。stream 自身的错误以字节偏移定位，嵌套 record
+仍保留真实字段 ID。`unpack` 沿用失败时不改变目标对象的语义。
+
+所有现有序列化和文件 API 均支持该模式；`reflected_stream<T>` 用于识别类型注解，
+`serialized_field_count<T>()` 返回非 transient 实体数，`schema_string<T>()` 展示加载顺序。
+这里的“流”指字节区间上的顺序消费，不提供分块或异步 I/O。
+
 ## 字段表示转换
 
 `srl::conversion_tag` 将字段的内存类型 `MemTy` 映射到编译期确定的持久化类型 `SrlTy`：
@@ -130,8 +175,8 @@ struct RenderState {
 };
 
 class AssetHandler : public srl::typed_reference_handler<Asset*, std::string> {
-    std::expected<void, srl::error> to_storage(Asset *const &mem, std::string &srl) override;
-    std::expected<void, srl::error> from_storage(Asset *&mem, const std::string &srl) override;
+    srl::error to_storage(Asset *const &mem, std::string &srl) override;
+    srl::error from_storage(Asset *&mem, const std::string &srl) override;
     // Implement using the application's asset registry.
 };
 
@@ -148,7 +193,7 @@ context.register_handler(srl::handler_key<AssetReferenceKey>(), handler);
 同一 `MemTy/SrlTy` 类型对可以注册多个不同业务标识。
 
 底层接口为纯虚函数 `mem2srl(const void*, void*)` 和 `srl2mem(void*, const void*)`，均返回
-`expected<void, error>`。参数指向已构造的类型对象，不是原始未初始化存储。对于指针字段，
+`error`（`error{}` 表示成功）。参数指向已构造的类型对象，不是原始未初始化存储。对于指针字段，
 `mem` 指向存放指针的字段，而不是被引用对象。handler 只能赋值，不得 placement new、
 销毁参数对象或保留参数地址。强类型适配基类完成擦除与恢复，业务代码通常不必自行强转。
 需要直接覆写擦除接口时，派生类必须通过基类的两个 `std::in_place_type` 参数声明类型对。
@@ -410,11 +455,42 @@ auto loaded = srl::load<T>(path, context);
 
 `write_block` 和 `read_block` 负责第 3、4 层转换；`save` 和 `load` 是它们与
 `pack`/`extract` 的组合接口。所有可恢复的输入和 IO 错误通过
-`std::expected<..., srl::error>` 返回。
+`std::expected<..., srl::error>` 返回；只返回错误状态的 `pack_into`、`unpack`、
+`decode_root`、`write_block` 和 `save` 直接返回 `srl::error`，`error{}` 表示成功。
+
+## 编译期 Schema 树
+
+`schema<T>::tree` 是统一的编译期结构描述。`root` 表示根节点，`value` 表示实际值节点；
+atomic 根节点额外包含 entry header，而嵌套 atomic 值仅包含 payload。通过 `node(index)`、
+`children(index)` 和 `child(index, ordinal)` 查询节点及子节点，索引始终属于同一棵树。
+
+```cpp
+using description = srl::schema<Profile>;
+static_assert(description::valid);
+constexpr auto value = description::value;
+constexpr auto first = description::child(value, 0);
+constexpr auto field_id = description::node(first).id;
+constexpr auto stored_type = description::node(first).type; // std::meta::info
+constexpr auto encoded_size = description::node(description::root).encode_extent;
+```
+
+节点包含 wire 分类、字段/基类反射信息、内存与存储类型、转换选项、容器槽位与数量约束。
+record 子节点按字段 ID 排序，stream 子节点按加载顺序排列；容器只描述 element 或 key/value
+槽位，不按元素数量展开。同一类型在不同字段的 stream、forced atomic、转换及重复元素策略
+分别记录在各自节点中。atomic 的对象表示是一个叶节点，其内部成员不是独立 wire 子节点。
+
+`encode_extent` 递归计算编码长度，无法静态确定时为 `std::dynamic_extent`。
+`decode_extent` 表示解码可要求的精确 payload 长度：atomic/forced 为固定尺寸，复合节点保留
+动态尺寸，因为目标类型的编码长度并不限定所有合法输入布局。定长内部编码和解码接口要求
+静态 extent 的 span；公共字节输入在边界检查长度后再转换，不截断过长的 payload。
+
+树构建、校验和尺寸计算使用非模板 `consteval` 函数与普通循环，结果固化为静态数组。
+模板仅连接 codec/容器适配接口、缓存根类型描述以及生成实际操作对象的代码。
+schema 不保存对象、转换结果或运行期 handler；这些状态仍由编码计划及上下文持有。
 
 ## Schema 可视化
 
-`schema_string<T>()` 在编译期遍历最终参与序列化的类型结构，并返回具有静态存储期的
+`schema_string<T>()` 在编译期遍历上述 schema 树，并返回具有静态存储期的
 `std::string_view`。输出包含 record 字段 ID、转换后的存储类型、atomic 固定大小、容器
 元素布局和固定元素数量；无效 schema 会在编译期被拒绝。原子节点区分
 `primitive-atomic`、`codec-atomic` 和 `object-atomic`。进入原子模式的直接成员或基类使用

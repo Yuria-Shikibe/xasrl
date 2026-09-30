@@ -6,6 +6,5 @@
 #include "container.hpp"
 #include "context.hpp"
 #include "schema.hpp"
-#include "schema_visualization.hpp"
 #include "serialization.hpp"
 #include "wire.hpp"

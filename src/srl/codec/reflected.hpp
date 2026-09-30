@@ -3,7 +3,6 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include <expected>
 #include <meta>
 #include <span>
 #include "base.hpp"
@@ -15,9 +14,7 @@ namespace srl {
         using value_type = codec_value_type<T>;
         if constexpr (!atomic_serializable<value_type>) {
             return false;
-        } else if constexpr (requires {
-                                 atomic_codec<value_type>::uses_direct_object_representation;
-                             }) {
+        } else if constexpr (requires {atomic_codec<value_type>::uses_direct_object_representation;}) {
             return atomic_codec<value_type>::uses_direct_object_representation;
         } else {
             return false;
@@ -52,7 +49,7 @@ namespace srl {
             }
         }();
 
-        [[nodiscard]] static std::expected<void, error> encode(
+        [[nodiscard]] static error encode(
             const T &value,
             std::span<std::byte, fixed_size> destination) {
             if constexpr (uses_direct_object_representation) {
@@ -71,7 +68,7 @@ namespace srl {
             }
         }
 
-        [[nodiscard]] static std::expected<void, error> decode(
+        [[nodiscard]] static error decode(
             std::span<const std::byte, fixed_size> source,
             T &out) {
             if constexpr (uses_direct_object_representation) {

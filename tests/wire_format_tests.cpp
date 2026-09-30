@@ -37,9 +37,9 @@ namespace srl_test {
                 "serialized_size did not match pack output");
         srl::byte_buffer direct;
         direct.resize(*direct_size);
-        require(srl::pack_into(
+        require(!srl::pack_into(
                     direct.span(),
-                    Pair{.first = 0x11223344, .second = 0x55667788}, default_context).has_value()
+                    Pair{.first = 0x11223344, .second = 0x55667788}, default_context)
                 && direct == *bytes,
                 "pack_into did not write directly into the supplied span");
     }
@@ -107,7 +107,7 @@ namespace srl_test {
         const auto native_array_bytes = srl::pack(native_array, default_context);
         require(native_array_bytes.has_value(), "native array packing failed");
         int native_array_copy[3]{};
-        require(srl::unpack(native_array_bytes->span(), native_array_copy, default_context).has_value()
+                require(!srl::unpack(native_array_bytes->span(), native_array_copy, default_context)
                 && std::ranges::equal(native_array, native_array_copy),
                 "native array round trip failed");
 
@@ -174,6 +174,18 @@ namespace srl_test {
         require_error(srl::extract<RejectingSetField>(field_bytes->span(), default_context),
                       srl::error_code::duplicate_container_element,
                       "field container duplicate tag was not enforced");
+    }
+
+    void test_container_entry_size_limit() {
+        using codec = srl::detail::root_codec<std::vector<int>>;
+
+        codec::encode_plan plan;
+        plan.payload.size = std::numeric_limits<std::uint32_t>::max()
+            - srl::detail::entry_mapping_wire_size;
+
+        const auto status = plan.prepare(std::vector<int>{1}, default_context);
+        require(status.code == srl::error_code::entry_too_large,
+                "container encoding accepted an entry too large for the wire size field");
     }
 
     void test_malformed_input() {
@@ -268,6 +280,7 @@ TEST(WireFormat, CompatibleViews) {
 
 TEST(ContainerSerialization, RoundTrips) {
     test_container_round_trips();
+    test_container_entry_size_limit();
 }
 
 TEST(MalformedInput, RejectsInvalidBytes) {

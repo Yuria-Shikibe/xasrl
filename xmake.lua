@@ -13,12 +13,12 @@ local function configure_cpp26_target()
     add_syslinks("stdc++exp")
 end
 
-target("untitled2")
+target("srl")
     set_kind("binary")
     add_files("src/main.cpp")
     configure_cpp26_target()
 
-target("untitled2_tests")
+target("srl.tests")
     set_default(false)
     set_kind("binary")
     add_files("tests/*.cpp")

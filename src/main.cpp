@@ -4,6 +4,7 @@
 #include <span>
 
 #include "srl/core.hpp"
+#include "srl/schema_visualization.hpp"
 
 template <typename T>
 struct [[=srl::tag::atomic{}]] vec2 {

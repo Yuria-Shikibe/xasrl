@@ -2,7 +2,6 @@
 
 #include <concepts>
 #include <cstdint>
-#include <expected>
 #include <functional>
 #include <meta>
 #include <stdexcept>
@@ -25,7 +24,7 @@ namespace srl {
 
     struct conversion_tag {
         std::meta::info target_type{};
-        const void *handler_id = nullptr;
+        const void *handler_id{};
     };
 
     class context_reference_handler {
@@ -46,8 +45,8 @@ namespace srl {
             return memory_type_ == handler_key<MemTy>() && storage_type_ == handler_key<SrlTy>();
         }
 
-        virtual std::expected<void, error> mem2srl(const void *mem, void *srl) = 0;
-        virtual std::expected<void, error> srl2mem(void *mem, const void *srl) = 0;
+        virtual error mem2srl(const void *mem, void *srl) = 0;
+        virtual error srl2mem(void *mem, const void *srl) = 0;
     };
 
     template<typename MemTy, typename SrlTy>
@@ -56,11 +55,11 @@ namespace srl {
         static_assert(std::same_as<MemTy, std::remove_cv_t<MemTy>>
                       && std::same_as<SrlTy, std::remove_cv_t<SrlTy>>);
 
-        std::expected<void, error> mem2srl(const void *mem, void *srl) final {
+        error mem2srl(const void *mem, void *srl) final {
             return this->to_storage(*static_cast<const MemTy *>(mem), *static_cast<SrlTy *>(srl));
         }
 
-        std::expected<void, error> srl2mem(void *mem, const void *srl) final {
+        error srl2mem(void *mem, const void *srl) final {
             return this->from_storage(*static_cast<MemTy *>(mem), *static_cast<const SrlTy *>(srl));
         }
 
@@ -68,17 +67,17 @@ namespace srl {
         typed_reference_handler() noexcept
             : context_reference_handler(std::in_place_type<MemTy>, std::in_place_type<SrlTy>) {}
 
-        virtual std::expected<void, error> to_storage(const MemTy &mem, SrlTy &srl) = 0;
-        virtual std::expected<void, error> from_storage(MemTy &mem, const SrlTy &srl) = 0;
+        virtual error to_storage(const MemTy &mem, SrlTy &srl) = 0;
+        virtual error from_storage(MemTy &mem, const SrlTy &srl) = 0;
     };
 
     enum class duplicate_policy : std::uint8_t {
         deduplicate,
         reject,
     };
+
     struct srl_ctx_config {
         duplicate_policy duplicates{duplicate_policy::deduplicate};
-
     };
 
     class serialization_context {
@@ -91,7 +90,7 @@ namespace srl {
     public:
         serialization_context() = default;
 
-        explicit serialization_context(duplicate_policy config) noexcept
+        explicit serialization_context(const srl_ctx_config& config) noexcept
             : config(config) {}
 
         // Handlers and their services must outlive all operations using this context.

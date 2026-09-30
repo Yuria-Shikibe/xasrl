@@ -22,7 +22,7 @@ namespace srl_test {
 
         Person target{.runtime_cookie = 777};
         const auto unpacked = srl::unpack(packed->span(), target, default_context);
-        require(unpacked.has_value(), "Person unpack failed");
+        require(!unpacked, "Person unpack failed");
         require(target.age == source.age && target.score == source.score,
                 "Person unpack produced incorrect fields");
         require(target.runtime_cookie == 777,

@@ -117,7 +117,7 @@ namespace conversion_tests {
 
         reference_handler(object &target, std::string id) : target(target), id(std::move(id)) {}
 
-        std::expected<void, srl::error> to_storage(object *const &mem, std::string &srl) override {
+        srl::error to_storage(object *const &mem, std::string &srl) override {
             ++writes;
             if (mem == nullptr) {
                 srl.clear();
@@ -129,7 +129,7 @@ namespace conversion_tests {
             return {};
         }
 
-        std::expected<void, srl::error> from_storage(object *&mem, const std::string &srl) override {
+        srl::error from_storage(object *&mem, const std::string &srl) override {
             ++reads;
             if (srl.empty()) {
                 mem = nullptr;
@@ -152,7 +152,7 @@ namespace conversion_tests {
             : context_reference_handler(std::in_place_type<object *>, std::in_place_type<std::string>),
               target(target) {}
 
-        std::expected<void, srl::error> mem2srl(const void *mem, void *srl) override {
+        srl::error mem2srl(const void *mem, void *srl) override {
             if (*static_cast<object *const *>(mem) != &target) {
                 return srl::detail::fail(srl::error_code::invalid_reference);
             }
@@ -160,7 +160,7 @@ namespace conversion_tests {
             return {};
         }
 
-        std::expected<void, srl::error> srl2mem(void *mem, const void *srl) override {
+        srl::error srl2mem(void *mem, const void *srl) override {
             if (*static_cast<const std::string *>(srl) != "raw-id") {
                 return srl::detail::fail(srl::error_code::unresolved_reference);
             }
@@ -170,8 +170,8 @@ namespace conversion_tests {
     };
 
     struct wrong_handler : srl::typed_reference_handler<int, std::string> {
-        std::expected<void, srl::error> to_storage(const int &, std::string &) override { return {}; }
-        std::expected<void, srl::error> from_storage(int &, const std::string &) override { return {}; }
+        srl::error to_storage(const int &, std::string &) override { return {}; }
+        srl::error from_storage(int &, const std::string &) override { return {}; }
     };
 
     struct nested_record {
@@ -335,7 +335,7 @@ namespace conversion_tests {
         srl::byte_buffer destination;
         destination.resize(*size);
         runtime_number::writes = 0;
-        check(srl::pack_into(destination.span(), source, default_context).has_value()
+        check(!srl::pack_into(destination.span(), source, default_context)
               && destination == *bytes && runtime_number::writes == 1, "direct pack_into repeated conversion");
 
         auto nested = srl::pack(record_conversion{runtime_number{73}}, default_context);
@@ -357,8 +357,8 @@ namespace conversion_tests {
         direct_record unchanged{runtime_number{99}};
         runtime_number::reads = 0;
         auto rejected_number = srl::unpack(malformed.span(), unchanged, default_context);
-        check(!rejected_number && rejected_number.error().code == srl::error_code::invalid_payload_shape
-              && rejected_number.error().id == 7 && runtime_number::reads == 0
+        check(rejected_number && rejected_number.code == srl::error_code::invalid_payload_shape
+              && rejected_number.id == 7 && runtime_number::reads == 0
               && unchanged.number.value == 99, "invalid storage reached direct conversion");
 
         auto container = srl::pack(converted_container{runtime_set{{1, 2, 3}}}, default_context);
@@ -400,11 +400,11 @@ namespace conversion_tests {
         srl::byte_buffer destination;
         destination.resize(*size);
         writer.writes = 0;
-        check(srl::pack_into(destination.span(), source, write_context).has_value()
+        check(!srl::pack_into(destination.span(), source, write_context)
               && destination == *bytes && writer.writes == 1, "context pack_into repeated conversion");
         destination.resize(1);
         auto wrong_size = srl::pack_into(destination.span(), source, write_context);
-        check(!wrong_size && wrong_size.error().code == srl::error_code::invalid_entry_size,
+        check(wrong_size && wrong_size.code == srl::error_code::invalid_entry_size,
               "pack_into accepted wrong destination size");
 
         auto null_bytes = srl::pack(reference_record{}, write_context);
@@ -419,8 +419,8 @@ namespace conversion_tests {
         check(unknown.has_value(), "unknown reference fixture failed");
         reference_record unchanged{&first};
         auto failed = srl::unpack(unknown->span(), unchanged, read_context);
-        check(!failed && failed.error().code == srl::error_code::unresolved_reference
-              && failed.error().id == 7 && failed.error().offset == 24 && unchanged.reference == &first,
+        check(failed && failed.code == srl::error_code::unresolved_reference
+              && failed.id == 7 && failed.offset == 24 && unchanged.reference == &first,
               "unknown reference lost error context or changed output");
         reader.throw_on_read = true;
         expect_throw<std::runtime_error>([&] { (void)srl::unpack(bytes->span(), unchanged, read_context); });
@@ -461,7 +461,7 @@ namespace conversion_tests {
         writer.writes = 0;
         srl::byte_buffer nested_destination;
         nested_destination.resize(nested_bytes->size());
-        check(srl::pack_into(nested_destination.span(), nested, write_context).has_value()
+        check(!srl::pack_into(nested_destination.span(), nested, write_context)
               && writer.writes == 3 && nested_destination == *nested_bytes,
               "nested pack_into repeated conversion");
 
@@ -487,12 +487,12 @@ namespace conversion_tests {
         auto array_bytes = srl::pack(array, write_context);
         check(array_bytes.has_value(), "context root array pack failed");
         reference_record array_copy[2]{};
-        check(srl::unpack(array_bytes->span(), array_copy, read_context).has_value()
+        check(!srl::unpack(array_bytes->span(), array_copy, read_context)
               && array_copy[0].reference == &second && array_copy[1].reference == nullptr,
               "context root array unpack failed");
 
         const auto path = std::filesystem::temp_directory_path() / "srl_conversion_round_trip.bin";
-        check(srl::save(path, source, write_context).has_value(), "context save failed");
+        check(!srl::save(path, source, write_context), "context save failed");
         auto loaded = srl::load<reference_record>(path, read_context);
         check(loaded.has_value() && loaded->reference == &second, "context load failed");
         std::filesystem::remove(path);
