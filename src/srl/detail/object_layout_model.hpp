@@ -5,6 +5,7 @@
 #include <span>
 
 #include "../types.hpp"
+#include "validation.hpp"
 
 namespace srl::detail {
     struct object_field {
@@ -13,6 +14,7 @@ namespace srl::detail {
         szt object_offset{};
         szt wire_offset{};
         szt size{};
+        validation_mode validation = validation_mode::checked;
     };
 
     struct object_layout {

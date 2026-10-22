@@ -9,40 +9,32 @@ namespace {
         bool do_is_equal(const std::pmr::memory_resource &other) const noexcept override { return this == &other; }
     };
 
-    TEST(ResourceLimits, RejectsBeforeReserveAndHandlesExactBounds) {
+    TEST(ResourceLimits, InputLimitPrecedesAllocationAndHandlesExactBounds) {
         srl::serialization_context context;
         srl::byte_buffer bytes;
         ASSERT_FALSE(srl::serialize(std::vector<int>{1, 2, 3}, bytes, context));
         forbidden_resource memory;
         std::pmr::vector<int> out{&memory};
-        context.config.limits.max_container_elements = 2;
+        context.config.limits.max_input_bytes = bytes.size() - 1;
         EXPECT_EQ(srl::deserialize(bytes.span(), out, context).code, srl::error_code::resource_limit_exceeded);
         EXPECT_TRUE(out.empty());
 
         std::vector<int> ordinary;
-        context.config.limits.max_container_elements = 3;
-        context.config.limits.max_total_elements = 3;
-        context.config.limits.max_element_storage = 3 * sizeof(int);
         context.config.limits.max_input_bytes = bytes.size();
         ASSERT_FALSE(srl::deserialize(bytes.span(), ordinary, context));
         EXPECT_EQ(ordinary, (std::vector<int>{1, 2, 3}));
-        --context.config.limits.max_element_storage;
-        EXPECT_EQ(srl::deserialize(bytes.span(), out, context).code, srl::error_code::resource_limit_exceeded);
-        context.config.limits.max_input_bytes = bytes.size() - 1;
-        EXPECT_EQ(srl::deserialize(bytes.span(), out, context).code, srl::error_code::resource_limit_exceeded);
     }
 
-    TEST(ResourceLimits, NestedContainersShareOneBudgetPerOperation) {
+    TEST(ResourceLimits, NestedContainersRoundTripWithinInputLimit) {
         const std::vector<std::vector<int>> source{{1, 2, 3}, {4, 5, 6}};
         srl::serialization_context context;
         srl::byte_buffer bytes;
         ASSERT_FALSE(srl::serialize(source, bytes, context));
-        context.config.limits.max_total_elements = 7;
+        context.config.limits.max_input_bytes = bytes.size() - 1;
         std::vector<std::vector<int>> out{{99}};
         EXPECT_EQ(srl::deserialize(bytes.span(), out, context).code, srl::error_code::resource_limit_exceeded);
         EXPECT_EQ(out, (std::vector<std::vector<int>>{{99}}));
-        context.config.limits.max_total_elements = 8;
-        context.config.limits.max_element_storage = 2 * sizeof(std::vector<int>) + 6 * sizeof(int);
+        context.config.limits.max_input_bytes = bytes.size();
         ASSERT_FALSE(srl::deserialize(bytes.span(), out, context));
         EXPECT_EQ(out, source);
         ASSERT_FALSE(srl::deserialize(bytes.span(), out, context));

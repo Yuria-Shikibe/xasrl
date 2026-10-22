@@ -7,6 +7,7 @@
 #include <meta>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "schema/build.hpp"
 
@@ -31,25 +32,22 @@ namespace srl {
     concept serializable = leaf_serializable<T> || reflected_record<T>
                            || reflected_stream<T> || container_serializable<T>;
 
-    template<typename T, bool Stream = reflected_stream<T>>
     struct schema {
-        static constexpr schema_tree tree = detail::build_schema(^^T, Stream);
-        static constexpr std::size_t root = tree.root;
-        static constexpr std::size_t value = tree.child(root, 0);
-        static constexpr auto nodes = tree.nodes;
-        static constexpr auto child_indices = tree.child_indices;
+        const schema_tree tree;
+        const std::size_t root;
+        const std::size_t value;
 
-        static consteval const schema_node &node(std::size_t index) noexcept {
-            return tree.node(index);
-        }
+        consteval explicit schema(std::meta::info type)
+            : schema(type, detail::annotation_count(std::meta::remove_cvref(type), ^^tag::auto_stream) != 0) {}
 
-        static consteval std::size_t child(std::size_t index, std::size_t ordinal) noexcept {
-            return tree.child(index, ordinal);
-        }
+        template<typename T>
+        consteval explicit schema(std::in_place_type_t<T>)
+            : schema(^^T, reflected_stream<T>) {}
 
-        static consteval auto children(std::size_t index) noexcept {
-            return tree.children(index);
-        }
+        consteval schema(std::meta::info type, bool stream)
+            : tree(detail::build_schema(type, stream)),
+              root(tree.root),
+              value(tree.child(root, 0)) {}
     };
 
     [[nodiscard]] consteval schema_issue inspect_schema(std::meta::info type) {

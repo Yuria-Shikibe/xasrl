@@ -4,11 +4,13 @@
 
 #include <bit>
 #include <climits>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <system_error>
+#include <type_traits>
 
 namespace srl {
     static_assert(CHAR_BIT == 8, "srl requires 8-bit bytes");
@@ -159,12 +161,27 @@ namespace srl {
 
     struct always_success {
         [[nodiscard]] constexpr explicit operator bool() const noexcept {
-            return true;
+            return false;
         }
+
+        constexpr always_success& set_id(std::optional<id_type>) noexcept { return *this; }
+
+        constexpr always_success& rebase(szt) noexcept { return *this; }
 
         constexpr explicit(false) operator error() const noexcept {
             return {};
         }
     };
+
+    template<typename T>
+    concept codec_status = std::same_as<T, error> || std::same_as<T, always_success>;
+
+    namespace detail {
+        template<bool AlwaysSuccessful>
+        using status_type = [:AlwaysSuccessful ? ^^always_success : ^^error:];
+
+        template<codec_status... Status>
+        using combined_status = status_type<(std::same_as<Status, always_success> && ...)>;
+    }
 
 }

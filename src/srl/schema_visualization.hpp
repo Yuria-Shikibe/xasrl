@@ -52,8 +52,8 @@ namespace srl::detail {
         }
         out.append(schema_type_name(display_type));
         out.append(" (size: ");
-        append_schema_unsigned(out, node.encode_extent);
-        out.append(node.encode_extent == 1 ? " byte" : " bytes");
+        append_schema_unsigned(out, node.encode_extent.value);
+        out.append(node.encode_extent.value == 1 ? " byte" : " bytes");
         if (object) {
             out.append(", representation: ");
             out.append(forced ? "forced-direct" : node.representation == leaf_representation::direct ? "direct" : "segmented");

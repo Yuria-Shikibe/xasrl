@@ -6,6 +6,7 @@
 #include <span>
 
 #include "diagnostic.hpp"
+#include "extent.hpp"
 #include "../conversion.hpp"
 #include "../types.hpp"
 #include "../detail/object_layout_model.hpp"
@@ -30,10 +31,10 @@ namespace srl {
         type_hash_type wire_type{};
         std::size_t children_begin{};
         std::size_t children_count{};
-        szt encode_extent = std::dynamic_extent;
-        szt decode_extent = std::dynamic_extent;
+        schema_extent encode_extent = schema_extent::dynamic();
+        schema_extent decode_extent = schema_extent::dynamic();
         std::size_t element_count = std::dynamic_extent;
-        szt header_size{};
+        schema_extent header_size = schema_extent::fixed(0);
         std::uint8_t mapping_group_size{};
         entry_kind wire_kind = entry_kind::leaf;
         leaf_representation representation = leaf_representation::codec;
@@ -41,6 +42,9 @@ namespace srl {
         conversion_tag conversion{};
         std::meta::info fallback_type{};
         schema_duplicates duplicates = schema_duplicates::inherit;
+        detail::validation_mode validation = detail::validation_mode::checked;
+        bool builtin_scalar_codec{};
+        bool builtin_object_codec{};
 
         [[nodiscard]] consteval bool converted() const noexcept {
             return conversion.target_type != std::meta::info{};
@@ -48,10 +52,11 @@ namespace srl {
     };
 
     struct schema_tree {
-        std::span<const schema_node> nodes;
-        std::span<const std::size_t> child_indices;
+        std::span<const schema_node> nodes{};
+        std::span<const std::size_t> child_indices{};
         std::size_t root{};
 
+        //TODO use operator[] instead of node()
         [[nodiscard]] consteval const schema_node &node(std::size_t index) const noexcept {
             return nodes[index];
         }

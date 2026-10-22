@@ -72,7 +72,7 @@ namespace srl::detail {
         std::meta::info declared;
         bool base;
         bool unsupported;
-        std::size_t fields, leaves, containers, conversions, transient, bypass, streams, fallbacks;
+        std::size_t fields, leaves, containers, conversions, transient, bypass, streams, fallbacks, validation_bypasses;
 
         consteval explicit entity_facts(std::meta::info entity)
             : declared(std::meta::type_of(entity)), base(std::meta::is_base(entity)),
@@ -85,7 +85,8 @@ namespace srl::detail {
               transient(annotation_count(entity, ^^tag::transient)),
               bypass(annotation_count(entity, ^^tag::bypass_pointer_check)),
               streams(annotation_count(entity, ^^tag::auto_stream)),
-              fallbacks(fallback_annotation_count(entity)) {}
+              fallbacks(fallback_annotation_count(entity)),
+              validation_bypasses(annotation_count(entity, ^^tag::bypass_validation)) {}
     };
 
     // Shared by automatic leaf eligibility and schema validation, including
@@ -93,18 +94,19 @@ namespace srl::detail {
     consteval std::meta::info leaf_metadata_issue(std::meta::info type) {
         if (annotation_count(type, ^^tag::auto_seq) != 0
             || annotation_count(type, ^^tag::auto_stream) != 0
-            || annotation_count(type, ^^tag::bypass_pointer_check) > 1) {
+            || annotation_count(type, ^^tag::bypass_pointer_check) > 1
+            || annotation_count(type, ^^tag::bypass_validation) > 1) {
             return type;
         }
         for (auto entity: reflected_entities(type)) {
             const entity_facts facts{entity};
-            if (facts.streams != 0 || facts.transient > 1 || facts.bypass > 1
+            if (facts.streams != 0 || facts.transient > 1 || facts.bypass > 1 || facts.validation_bypasses > 1
                 || facts.fields != 0 || facts.leaves != 0 || facts.containers != 0
                 || facts.fallbacks != 0 || facts.conversions != 0) {
                 return entity;
             }
             if (facts.transient == 1) {
-                if (facts.base || facts.bypass != 0) { return entity; }
+                if (facts.base || facts.bypass != 0 || facts.validation_bypasses != 0) { return entity; }
                 continue;
             }
             if (facts.unsupported || std::meta::is_reference_type(facts.declared)

@@ -24,7 +24,7 @@ namespace {
 
     template<typename T>
     void check_generated_validation() {
-        constexpr auto &schema = srl::schema<T>::tree;
+        constexpr auto schema = srl::schema(^^T).tree;
         constexpr auto node = schema.child(schema.root, 0);
         constexpr auto layout = schema.node(node).object;
         static_assert(!layout.fields().empty());
@@ -59,7 +59,7 @@ namespace {
         srl::serialization_context context;
         srl::byte_buffer bytes;
         ASSERT_FALSE(srl::serialize(forced{}, bytes, context));
-        constexpr auto &tree = srl::schema<forced>::tree;
+        constexpr auto tree = srl::schema(^^forced).tree;
         constexpr auto field = tree.child(tree.child(tree.root, 0), 0);
         constexpr auto layout = tree.node(field).object;
         static_assert(layout.fields().size() == 4);

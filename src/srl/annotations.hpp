@@ -166,7 +166,8 @@ namespace srl {
             std::uint64_t mask{};
         };
 
-        //TODO
+        // Trust scalar value representations in this serialized subtree. This does
+        // not bypass structural parsing, schema validation or custom codec checks.
         struct bypass_validation{};
 
         struct auto_seq {};

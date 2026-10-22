@@ -15,5 +15,5 @@ namespace srl::detail {
         constexpr szt entry_mapping_wire_size = sizeof(entry_mapping);
         // The all-ones extent is reserved by std::span for dynamic_extent.
         static_assert(sizeof(std::size_t) <= sizeof(szt));
-        constexpr szt maximum_entry_size = std::numeric_limits<std::size_t>::max() - 1;
+        constexpr szt maximum_entry_size = std::numeric_limits<decltype(std::dynamic_extent)>::max() - 1;
 }

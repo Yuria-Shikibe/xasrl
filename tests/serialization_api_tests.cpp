@@ -84,7 +84,7 @@ namespace serialization_api_tests {
 
     template<typename T, std::size_t Extent>
     concept serializes_to = requires(const T &value, std::span<std::byte, Extent> bytes) {
-        { srl::serialize(value, bytes, context) } -> std::same_as<srl::error>;
+        { srl::serialize(value, bytes, context) } -> srl::codec_status;
     };
 
     template<typename T, typename Byte = const std::byte, std::size_t Extent = std::dynamic_extent>

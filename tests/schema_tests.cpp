@@ -1,6 +1,7 @@
 #include "srl/error.hpp"
 
 #include <gtest/gtest.h>
+#include <limits>
 
 #include "test_models.hpp"
 
@@ -108,3 +109,93 @@ static_assert(srl::detail::scalar_wire_type(^^double) == 0x408u);
 static_assert(srl::detail::initialized_fallback_valid(^^int[2][3]));
 static_assert(!srl::detail::initialized_fallback_valid(^^const int[2][3]));
 static_assert(!srl::detail::initialized_fallback_valid(^^int[]));
+
+namespace field_build_tests {
+    constexpr auto maximum_id = std::numeric_limits<srl::id_type>::max();
+
+    struct [[=srl::tag::auto_seq{}]] mixed_ids {
+        int first{};
+        [[=srl::tag::transient{}]] int *cache{};
+        [[=srl::tag::field{10}]] int explicit_id{};
+        int following{};
+        [[=srl::tag::field{2}]] int reset{};
+        int after_reset{};
+    };
+
+    constexpr auto mixed = srl::schema(^^mixed_ids).tree;
+    constexpr auto mixed_value = mixed.child(mixed.root, 0);
+    static_assert(mixed.node(mixed_value).children_count == 5);
+    static_assert(mixed.node(mixed.child(mixed_value, 0)).id == 0);
+    static_assert(mixed.node(mixed.child(mixed_value, 1)).id == 2);
+    static_assert(mixed.node(mixed.child(mixed_value, 2)).id == 3);
+    static_assert(mixed.node(mixed.child(mixed_value, 3)).id == 10);
+    static_assert(mixed.node(mixed.child(mixed_value, 4)).id == 11);
+    static_assert(mixed.node(mixed.child(mixed_value, 1)).entity == ^^mixed_ids::reset);
+
+    struct [[=srl::tag::auto_seq{}]] terminal_id {
+        [[=srl::tag::field{maximum_id}]] int last{};
+        [[=srl::tag::transient{}]] int skipped{};
+    };
+    struct [[=srl::tag::auto_seq{}]] reset_after_maximum {
+        [[=srl::tag::field{maximum_id}]] int last{};
+        [[=srl::tag::field{0}]] int reset{};
+        int following{};
+    };
+    static_assert(srl::schema_valid(^^terminal_id));
+    static_assert(srl::schema_valid(^^reset_after_maximum));
+
+    struct [[=srl::tag::auto_seq{}]] overflow_before_unsupported {
+        [[=srl::tag::field{maximum_id}]] int last{};
+        unsigned bits : 1;
+    };
+    constexpr auto overflow = srl::inspect_schema(^^overflow_before_unsupported);
+    static_assert(overflow.reason == srl::schema_error::field_id_overflow);
+    static_assert(overflow.entity == ^^overflow_before_unsupported::bits);
+    static_assert(overflow.path.size() == 2);
+    static_assert(overflow.path[0] == ^^overflow_before_unsupported);
+    static_assert(overflow.path[1] == ^^overflow_before_unsupported::bits);
+
+    struct leaf_before_pointer {
+        [[=srl::tag::field{0}, =srl::tag::leaf{}]] int *pointer{};
+    };
+    struct conflict_before_conversion {
+        [[=srl::tag::field{0}, =srl::tag::leaf{}, =srl::conversion_tag{^^int}]] int *pointer{};
+    };
+    static_assert(srl::inspect_schema(^^leaf_before_pointer).reason
+        == srl::schema_error::invalid_object_representation);
+    static_assert(srl::inspect_schema(^^conflict_before_conversion).reason
+        == srl::schema_error::conflicting_annotations);
+
+    struct [[=srl::tag::auto_seq{}]] stream_override {
+        [[=srl::tag::field{maximum_id}, =srl::tag::field{0}]] int first{};
+        [[=srl::tag::field{maximum_id}]] int second{};
+        [[=srl::tag::transient{}, =srl::tag::field{0}]] int skipped{};
+    };
+    struct stream_owner {
+        [[=srl::tag::field{7}, =srl::tag::auto_stream{}]] stream_override value;
+    };
+    constexpr auto overridden = srl::schema(^^stream_owner).tree;
+    constexpr auto stream = overridden.child(overridden.child(overridden.root, 0), 0);
+    static_assert(overridden.node(stream).kind == srl::schema_kind::stream);
+    static_assert(overridden.node(stream).children_count == 2);
+    static_assert(!overridden.node(overridden.child(stream, 0)).has_field_id);
+    static_assert(!overridden.node(overridden.child(stream, 1)).has_field_id);
+}
+
+namespace {
+    struct [[=srl::tag::auto_seq{}]] constructed_record {
+        int value;
+    };
+    struct [[=srl::tag::auto_stream{}]] constructed_stream {
+        int value;
+    };
+
+    constexpr srl::schema record_description(^^constructed_record);
+    constexpr srl::schema stream_description(^^constructed_stream);
+    constexpr srl::schema typed_description(std::in_place_type<const constructed_stream &>);
+    constexpr srl::schema forced_description(^^constructed_record, true);
+    static_assert(record_description.tree.node(record_description.value).kind == srl::schema_kind::record);
+    static_assert(stream_description.tree.node(stream_description.value).kind == srl::schema_kind::stream);
+    static_assert(typed_description.tree.node(typed_description.value).kind == srl::schema_kind::stream);
+    static_assert(forced_description.tree.node(forced_description.value).kind == srl::schema_kind::stream);
+}

@@ -6,10 +6,10 @@ namespace {
     struct [[=srl::tag::auto_stream{}]] xy { int x{}, y{}; };
     struct [[=srl::tag::auto_stream{}]] yx { int y{}, x{}; };
 
-    static_assert(srl::schema<integer_field>::node(srl::schema<integer_field>::value).wire_type
-        == srl::schema<float_field>::node(srl::schema<float_field>::value).wire_type);
-    static_assert(srl::schema<xy>::node(srl::schema<xy>::value).wire_type
-        != srl::schema<yx>::node(srl::schema<yx>::value).wire_type);
+    static_assert(srl::schema(^^integer_field).tree.node(srl::schema(^^integer_field).value).wire_type
+        == srl::schema(^^float_field).tree.node(srl::schema(^^float_field).value).wire_type);
+    static_assert(srl::schema(^^xy).tree.node(srl::schema(^^xy).value).wire_type
+        != srl::schema(^^yx).tree.node(srl::schema(^^yx).value).wire_type);
 
     TEST(WireContract, RejectsSameSizeTypeChangesAndStreamReordering) {
         srl::serialization_context context;
@@ -36,7 +36,7 @@ namespace {
 
     TEST(WireContract, SchemaGeneratesFieldTypeMutationCases) {
         using model = Profile;
-        constexpr auto &tree = srl::schema<model>::tree;
+        constexpr auto tree = srl::schema(^^model).tree;
         constexpr auto root = tree.child(tree.root, 0);
         srl::serialization_context context;
         srl::byte_buffer bytes;

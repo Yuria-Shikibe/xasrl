@@ -14,6 +14,12 @@
 #include <type_traits>
 #include <utility>
 
+#if defined(_MSC_VER)
+#define SRL_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
+#else
+#define SRL_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#endif
+
 namespace srl::storage {
     template<typename Allocator = std::allocator<std::byte>>
         requires std::same_as<typename std::allocator_traits<Allocator>::value_type, std::byte>
@@ -56,10 +62,10 @@ namespace srl::storage {
                 basic_byte_buffer replacement(other, other.allocator_);
                 release();
                 allocator_ = other.allocator_;
-                take_storage(replacement);
+                this->take_storage(replacement);
             } else {
                 basic_byte_buffer replacement(other, allocator_);
-                swap_storage(replacement);
+                this->swap_storage(replacement);
             }
             return *this;
         }
@@ -71,16 +77,16 @@ namespace srl::storage {
             if constexpr (traits::propagate_on_container_move_assignment::value) {
                 release();
                 allocator_ = std::move(other.allocator_);
-                take_storage(other);
+                this->take_storage(other);
             } else if constexpr (traits::is_always_equal::value) {
                 release();
-                take_storage(other);
+                this->take_storage(other);
             } else if (allocator_ == other.allocator_) {
                 release();
-                take_storage(other);
+                this->take_storage(other);
             } else {
                 basic_byte_buffer replacement(other, allocator_);
-                swap_storage(replacement);
+                this->swap_storage(replacement);
                 other.clear();
             }
             return *this;
@@ -129,7 +135,7 @@ namespace srl::storage {
 
         void resize(size_type size, std::byte value = {}) {
             reserve(size);
-            if (size > size_) { std::fill_n(data() + size_, size - size_, value); }
+            if (size > size_) { std::ranges::fill_n(data() + size_, size - size_, value); }
             size_ = size;
         }
 
@@ -141,13 +147,20 @@ namespace srl::storage {
 
         // writer initializes the returned prefix, returns a length <= size, and must not
         // mutate this buffer through another alias. Exceptions leave an empty reusable buffer.
+        // TODO force no throw?
         template<typename Writer>
-            requires std::invocable<Writer, std::span<std::byte>>
-                && std::same_as<std::invoke_result_t<Writer, std::span<std::byte>>, size_type>
+            requires std::is_invocable_r_v<size_type, Writer&&, std::span<std::byte>>
         void resize_and_overwrite(size_type size, Writer &&writer) {
             reserve(size);
             size_ = 0;
-            size_ = std::invoke(std::forward<Writer>(writer), std::span<std::byte>{data(), size});
+            size_ = std::invoke_r<size_type>(std::forward<Writer>(writer), std::span{data(), size});
+        }
+
+        template<typename Writer>
+            requires std::is_nothrow_invocable_r_v<size_type, Writer&&, std::span<std::byte>>
+        void resize_and_overwrite(size_type size, Writer &&writer) {
+            reserve(size);
+            size_ = std::invoke_r<size_type>(std::forward<Writer>(writer), std::span{data(), size});
         }
 
         void clear() noexcept { size_ = 0; }
@@ -176,13 +189,12 @@ namespace srl::storage {
         }
 
         void swap_storage(basic_byte_buffer &other) noexcept {
-            using std::swap;
-            swap(storage_, other.storage_);
-            swap(size_, other.size_);
-            swap(capacity_, other.capacity_);
+            std::ranges::swap(storage_, other.storage_);
+            std::ranges::swap(size_, other.size_);
+            std::ranges::swap(capacity_, other.capacity_);
         }
 
-        [[no_unique_address]] allocator_type allocator_{};
+        SRL_NO_UNIQUE_ADDRESS allocator_type allocator_{};
         pointer storage_{};
         size_type size_{};
         size_type capacity_{};
@@ -194,3 +206,5 @@ namespace srl::storage {
 namespace srl {
     using byte_buffer = storage::byte_buffer;
 }
+
+#undef SRL_NO_UNIQUE_ADDRESS

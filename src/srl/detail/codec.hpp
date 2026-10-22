@@ -17,12 +17,20 @@
 #include <utility>
 #include <vector>
 
+#include "../cond_value.hpp"
 #include "../context.hpp"
 #include "../schema.hpp"
-#include "wire_parse.hpp"
+#include "codec_support.hpp"
+
+#if defined(_MSC_VER)
+#define SRL_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
+#else
+#define SRL_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#endif
 
 namespace srl::detail {
-    inline error locate_error(error failure, std::optional<id_type> id, szt offset = 0) noexcept {
+    template<codec_status Status>
+    constexpr Status locate_error(Status failure, std::optional<id_type> id, szt offset = 0) noexcept {
         return failure.set_id(id).rebase(offset);
     }
 
@@ -36,7 +44,7 @@ namespace srl::detail {
     }
 
     template<const schema_tree &Tree, std::size_t Node>
-    using node_value_t = typename[:Tree.node(Node).type:];
+    using node_value_t = [:Tree.node(Node).type:];
 
     template<const schema_tree &Tree, std::size_t Node>
     struct value_codec;
@@ -45,41 +53,60 @@ namespace srl::detail {
         requires (Tree.node(Node).kind == schema_kind::leaf)
     struct value_codec<Tree, Node> {
         using value_type = node_value_t<Tree, Node>;
-        static constexpr auto descriptor = Tree.node(Node);
-        static constexpr auto static_extent = descriptor.encode_extent;
-        static constexpr auto object = descriptor.object;
+        static constexpr schema_node descriptor = Tree.node(Node);
+
+        static constexpr object_layout object = descriptor.object;
 
         struct encode_plan {
-            static constexpr auto static_extent = value_codec::static_extent;
-            static constexpr auto size = static_extent;
+            static constexpr auto size = descriptor.encode_extent.value;
 
-            error prepare(const value_type &, const serialization_context &) { return {}; }
+            using prepare_result = always_success;
+            prepare_result prepare(const value_type &, const serialization_context &) { return {}; }
 
-            error encode(std::span<std::byte, static_extent> destination, const value_type &value) const {
+            auto encode(std::span<std::byte, descriptor.encode_extent.value> destination, const value_type &value) const {
                 if constexpr (descriptor.representation == leaf_representation::forced) {
-                    encode_object_bytes<object>(value, destination);
-                    return {};
+                    return detail::encode_object_bytes<object>(value, destination);
                 } else {
                     return leaf_codec<value_type>::encode(value, destination);
                 }
             }
+
+            using encode_result = decltype(std::declval<const encode_plan &>().encode(
+                std::declval<std::span<std::byte, descriptor.encode_extent.value>>(), std::declval<const value_type &>()));
         };
 
-        template<std::size_t Extent>
-        [[nodiscard]] static error decode(
-            std::span<const std::byte, Extent> source, value_type &out,
-            const serialization_context &, decode_budget &, std::optional<id_type> id = std::nullopt, szt offset = 0) {
-            // Validate untrusted lengths before forming the fixed-size codec span.
-            constexpr auto extent = descriptor.decode_extent;
-            if (source.size() != extent) {
-                return fail(error_code::invalid_payload_shape, id, offset);
-            }
-            if constexpr (descriptor.representation == leaf_representation::forced) {
-                auto status = decode_object_bytes<object>(source.template first<extent>(), out);
-                return status ? locate_error(status, id, offset) : error{};
+        static auto decode_payload(std::span<const std::byte, descriptor.encode_extent.value> source, value_type &out) {
+            if constexpr (descriptor.representation == leaf_representation::forced || descriptor.builtin_object_codec) {
+                return detail::decode_object_bytes<object>(source, out);
+            } else if constexpr (descriptor.builtin_scalar_codec) {
+                return scalar_codec<value_type>::template decode_with_validation<descriptor.validation>(source, out);
             } else {
-                auto status = leaf_codec<value_type>::decode(source.template first<extent>(), out);
-                return status ? locate_error(status, id, offset) : error{};
+                return leaf_codec<value_type>::decode(source, out);
+            }
+        }
+
+        using payload_decode_result = decltype(value_codec::decode_payload(
+            std::declval<std::span<const std::byte, descriptor.encode_extent.value>>(), std::declval<value_type &>()));
+
+        template<std::size_t Extent>
+        [[nodiscard]] static combined_status<status_type<Extent == descriptor.encode_extent.value>, payload_decode_result> decode(
+            std::span<const std::byte, Extent> source, value_type &out,
+            const serialization_context &) {
+            // Validate untrusted lengths before forming the fixed-size codec span.
+            constexpr auto extent = descriptor.decode_extent.value;
+            if constexpr (Extent != std::dynamic_extent && Extent != extent) {
+                return fail(error_code::invalid_payload_shape);
+            } else {
+                if constexpr (Extent == std::dynamic_extent) {
+                    if (source.size() != extent) {
+                        return fail(error_code::invalid_payload_shape);
+                    }
+                }
+                auto status = value_codec::decode_payload(source.template first<extent>(), out);
+                if constexpr (std::same_as<decltype(status), error>) {
+                    if (status) { return status; }
+                }
+                return {};
             }
         }
     };
@@ -88,33 +115,27 @@ namespace srl::detail {
 
     template<const schema_tree &Tree, std::size_t Node>
     struct field_codec {
-        static constexpr auto descriptor = Tree.node(Node);
-        static constexpr auto id = descriptor.id;
-        static constexpr std::optional<id_type> diagnostic_id = descriptor.has_field_id
-            ? std::optional<id_type>{id} : std::nullopt;
-        static constexpr auto static_extent = descriptor.encode_extent;
-        static constexpr auto entity_kind = descriptor.role == schema_role::base
-            ? reflected_entity_kind::base : reflected_entity_kind::member;
-        static constexpr auto handler_id = descriptor.conversion.handler_id;
-        using memory_type = typename[:descriptor.memory_type:];
+        static constexpr schema_node descriptor = Tree.node(Node);
+
+        using memory_type = [:descriptor.memory_type:];
         using storage_type = node_value_t<Tree, Node>;
 
         struct encode_plan {
-            static constexpr auto id = field_codec::id;
-            static constexpr auto diagnostic_id = field_codec::diagnostic_id;
-            static constexpr auto wire_type = descriptor.wire_type;
-            static constexpr auto static_extent = field_codec::static_extent;
-            [[no_unique_address]] typename[:descriptor.converted() ? ^^std::optional<storage_type> : ^^no_conversion:] storage;
-            [[no_unique_address]] typename value_codec<Tree, Node>::encode_plan payload;
+            SRL_NO_UNIQUE_ADDRESS [:descriptor.converted() ? ^^std::optional<storage_type> : ^^no_conversion:] storage;
+            SRL_NO_UNIQUE_ADDRESS value_codec<Tree, Node>::encode_plan payload;
+
+            using prepare_result = combined_status<
+                status_type<descriptor.conversion.handler_id == nullptr>, typename decltype(payload)::prepare_result>;
+            using encode_result = decltype(payload)::encode_result;
 
             template<typename T>
-            error prepare(const T &object, const serialization_context &context) {
-                const auto &mem = detail::entity_reference<descriptor.entity, entity_kind>(object);
+            prepare_result prepare(const T &object, const serialization_context &context) {
+                const auto &mem = detail::entity_reference<descriptor.entity, (descriptor.role == schema_role::base ? reflected_entity_kind::base : reflected_entity_kind::member)>(object);
                 if constexpr (descriptor.converted()) {
-                    if constexpr (handler_id == nullptr) {
+                    if constexpr (descriptor.conversion.handler_id == nullptr) {
                         storage.emplace(static_cast<storage_type>(mem));
                     } else {
-                        auto &handler = context.template get_handler<memory_type, storage_type>(handler_id);
+                        auto &handler = context.template get_handler<memory_type, storage_type>(descriptor.conversion.handler_id);
                         storage.emplace();
                         if (auto status = handler.mem2srl(std::addressof(mem), std::addressof(*storage)); status) {
                             return status;
@@ -127,41 +148,41 @@ namespace srl::detail {
             }
 
             template<typename T>
-            error encode(std::span<std::byte, static_extent> destination, const T &object) const {
+            encode_result encode(std::span<std::byte, descriptor.encode_extent.value> destination, const T &object) const {
                 if constexpr (descriptor.converted()) {
                     return payload.encode(destination, *storage);
                 } else {
-                    return payload.encode(destination, detail::entity_reference<descriptor.entity, entity_kind>(object));
+                    return payload.encode(destination, detail::entity_reference<descriptor.entity, (descriptor.role == schema_role::base ? reflected_entity_kind::base : reflected_entity_kind::member)>(object));
                 }
             }
         };
 
         template<typename T>
         [[nodiscard]] static error decode(
-            const field_view &field, T &out, const serialization_context &context, decode_budget &budget) {
+            const field_view &field, T &out, const serialization_context &context) {
             if (field.wire_type != descriptor.wire_type) {
-                return fail(error_code::type_mismatch, diagnostic_id, field.offset);
+                return fail(error_code::type_mismatch, detail::diagnostic_id(descriptor), field.offset);
             }
-            auto &mem = detail::entity_reference<descriptor.entity, entity_kind>(out);
+            auto &mem = detail::entity_reference<descriptor.entity, (descriptor.role == schema_role::base ? reflected_entity_kind::base : reflected_entity_kind::member)>(out);
             if constexpr (descriptor.converted()) {
                 storage_type storage{};
-                if constexpr (handler_id == nullptr) {
-                    if (auto status = value_codec<Tree, Node>::decode(field.bytes, storage, context, budget, diagnostic_id, field.offset); status) {
-                        return status;
+                if constexpr (descriptor.conversion.handler_id == nullptr) {
+                    if (auto status = value_codec<Tree, Node>::decode(field.bytes, storage, context); status) {
+                        return detail::locate_error(status, detail::diagnostic_id(descriptor), field.offset);
                     }
                     mem = static_cast<memory_type>(std::move(storage));
                 } else {
-                    auto &handler = context.template get_handler<memory_type, storage_type>(handler_id);
-                    if (auto status = value_codec<Tree, Node>::decode(field.bytes, storage, context, budget, diagnostic_id, field.offset); status) {
-                        return status;
+                    auto &handler = context.template get_handler<memory_type, storage_type>(descriptor.conversion.handler_id);
+                    if (auto status = value_codec<Tree, Node>::decode(field.bytes, storage, context); status) {
+                        return detail::locate_error(status, detail::diagnostic_id(descriptor), field.offset);
                     }
                     if (auto status = handler.srl2mem(std::addressof(mem), std::addressof(storage)); status) {
-                        return locate_error(status, diagnostic_id, field.offset);
+                        return detail::locate_error(status, detail::diagnostic_id(descriptor), field.offset);
                     }
                 }
             } else {
-                if (auto status = value_codec<Tree, Node>::decode(field.bytes, mem, context, budget, diagnostic_id, field.offset); status) {
-                    return status;
+                if (auto status = value_codec<Tree, Node>::decode(field.bytes, mem, context); status) {
+                    return detail::locate_error(status, detail::diagnostic_id(descriptor), field.offset);
                 }
             }
             return {};
@@ -169,7 +190,20 @@ namespace srl::detail {
     };
 
     template<const schema_tree &Tree, std::size_t Node>
-    using field_encode_plan = typename field_codec<Tree, Node>::encode_plan;
+    using field_encode_plan = field_codec<Tree, Node>::encode_plan;
+
+    template<const auto &Members, bool Prepare>
+    consteval bool plans_always_succeed() {
+        template for (constexpr auto member: Members) {
+            using plan = [:std::meta::type_of(member):];
+            if constexpr (Prepare) {
+                if constexpr (!std::same_as<typename plan::prepare_result, always_success>) { return false; }
+            } else {
+                if constexpr (!std::same_as<typename plan::encode_result, always_success>) { return false; }
+            }
+        }
+        return true;
+    }
 
     consteval std::meta::info define_plan_members(
         std::meta::info target, std::meta::info plan_template, std::meta::info tree_reference,
@@ -191,56 +225,62 @@ namespace srl::detail {
         requires (Tree.node(Node).kind == schema_kind::record || Tree.node(Node).kind == schema_kind::stream)
     struct value_codec<Tree, Node> {
         using value_type = node_value_t<Tree, Node>;
-        static constexpr auto descriptor = Tree.node(Node);
-        static constexpr auto static_extent = descriptor.encode_extent;
-        static constexpr bool stream = descriptor.kind == schema_kind::stream;
-        static constexpr auto field_count = descriptor.children_count;
-        static constexpr auto content_offset = descriptor.header_size + (stream ? 0 : field_count * entry_mapping_wire_size);
+        static constexpr schema_node descriptor = Tree.node(Node);
+
         struct encode_plan {
             struct fields_type;
             consteval {
                 define_plan_members(^^fields_type, ^^field_encode_plan, std::meta::reflect_object(Tree), Tree, Node);
             }
-            static constexpr auto members = std::define_static_array(
+            static constexpr std::span<const std::meta::info> members = std::define_static_array(
                 std::meta::nonstatic_data_members_of(^^fields_type, std::meta::access_context::current()));
-            static constexpr auto static_extent = value_codec::static_extent;
-            [[no_unique_address]] fields_type fields;
-            szt size = static_extent == std::dynamic_extent ? content_offset : static_extent;
 
-            error prepare(const value_type &value, const serialization_context &context) {
-                template for (constexpr auto member: members) {
+            SRL_NO_UNIQUE_ADDRESS fields_type fields;
+
+            using prepare_result = status_type<descriptor.encode_extent.value != std::dynamic_extent
+                && plans_always_succeed<members, true>()>;
+            using encode_result = status_type<plans_always_succeed<members, false>()>;
+            SRL_NO_UNIQUE_ADDRESS cond_value<szt, descriptor.encode_extent.value == std::dynamic_extent, descriptor.encode_extent.value>
+                size{record_content_offset(descriptor)};
+
+            prepare_result prepare(const value_type &value, const serialization_context &context) {
+                template for (constexpr auto ordinal: std::views::iota(std::size_t{}, members.size())) {
+                    constexpr auto member = members[ordinal];
+                    static constexpr schema_node field_node = Tree.node(Tree.child(Node, ordinal));
                     auto &field = fields.[:member:];
-                    if (auto status = field.prepare(value, context); status) {
-                        return locate_error(status, field.diagnostic_id);
+                    if constexpr (auto status = field.prepare(value, context); std::same_as<decltype(status), error>) {
+                        if (status) { return detail::locate_error(status, detail::diagnostic_id(field_node)); }
                     }
-                    if constexpr (static_extent == std::dynamic_extent) {
-                        if (field.payload.size > maximum_entry_size - size) {
-                            return fail(error_code::entry_too_large, field.id);
+                    if constexpr (descriptor.encode_extent.value == std::dynamic_extent) {
+                        if (auto status = append_encoded_size(size, field.payload.size, 0, field_node.id); status) {
+                            return status;
                         }
-                        size += field.payload.size;
                     }
                 }
                 return {};
             }
 
-            error encode(std::span<std::byte, static_extent> destination, const value_type &value) const {
+            encode_result encode(std::span<std::byte, descriptor.encode_extent.value> destination, const value_type &value) const {
                 constexpr auto wire_kind = descriptor.wire_kind;
-                write_trivial(destination, entry_head{
+                detail::write_trivial(destination, entry_head{
                     .size = size,
-                    .metadata = {stream ? 0 : field_count, wire_kind},
+                    .metadata = {(descriptor.kind == schema_kind::stream) ? 0 : descriptor.children_count, wire_kind},
                     .wire_type = descriptor.wire_type,
                 });
                 szt address{};
                 std::size_t index{};
-                template for (constexpr auto member: members) {
+                template for (constexpr auto ordinal: std::views::iota(std::size_t{}, members.size())) {
+                    constexpr auto member = members[ordinal];
+                    static constexpr schema_node field_node = Tree.node(Tree.child(Node, ordinal));
                     const auto &field = fields.[:member:];
-                    if constexpr (!stream) {
-                        write_trivial(destination.subspan(entry_head_wire_size + index++ * entry_mapping_wire_size),
-                            entry_mapping{.id = field.id, .wire_type = field.wire_type, .offset = address});
+                    if constexpr (descriptor.kind != schema_kind::stream) {
+                        detail::write_trivial(destination.subspan(entry_head_wire_size + index++ * entry_mapping_wire_size),
+                            entry_mapping{.id = field_node.id, .wire_type = field_node.wire_type, .offset = address});
                     }
-                    if (auto status = field.encode(
-                        payload_span<field.static_extent>(destination, content_offset + address, field.payload.size), value); status) {
-                        return locate_error(status, field.diagnostic_id, content_offset + address);
+                    if constexpr (auto status = field.encode(
+                        detail::payload_span<field_node.encode_extent.value>(destination, record_content_offset(descriptor) + address, field.payload.size), value);
+                        std::same_as<decltype(status), error>) {
+                        if (status) { return detail::locate_error(status, detail::diagnostic_id(field_node), record_content_offset(descriptor) + address); }
                     }
                     address += field.payload.size;
                 }
@@ -250,59 +290,34 @@ namespace srl::detail {
 
         [[nodiscard]] static error decode(
             std::span<const std::byte> source, value_type &out,
-            const serialization_context &context, decode_budget &budget, std::optional<id_type> id = std::nullopt, szt offset = 0) {
+            const serialization_context &context) {
             auto entry = parse_entry(source);
-            auto status = entry ? decode_entry(*entry, out, context, budget) : entry.error();
-            return status ? locate_error(status, id, offset) : error{};
+            return entry ? value_codec::decode_entry(*entry, out, context) : entry.error();
         }
 
         [[nodiscard]] static error decode_entry(
             const entry_view &entry, value_type &out,
-            const serialization_context &context, decode_budget &budget) {
-            constexpr auto wire_kind = descriptor.wire_kind;
-            if (entry.head().kind() != wire_kind) {
-                return fail(error_code::entry_kind_mismatch, std::nullopt, 11);
-            }
-            if (entry.head().wire_type != descriptor.wire_type) {
-                return fail(error_code::type_mismatch, std::nullopt, 12);
+            const serialization_context &context) {
+            if (auto status = validate_entry_type(entry, descriptor.wire_kind, descriptor.wire_type); status) {
+                return status;
             }
             szt cursor{};
             template for (constexpr auto child: Tree.children(Node)) {
-                static constexpr auto field_node = Tree.node(child);
+                static constexpr schema_node field_node = Tree.node(child);
                 constexpr auto field_id = field_node.id;
-                constexpr auto field_extent = field_node.decode_extent;
+                constexpr auto field_extent = field_node.decode_extent.value;
                 constexpr auto field_wire_type = field_node.wire_type;
                 auto field = [&]() -> std::expected<field_view, error> {
-                    if constexpr (!stream) {
+                    if constexpr (descriptor.kind != schema_kind::stream) {
                         return entry.find(field_id);
                     } else {
-                        const auto remaining = entry.content().subspan(cursor);
-                        const auto offset = entry.content_offset() + cursor;
-                        szt size{};
-                        if constexpr (field_extent != std::dynamic_extent) {
-                            size = field_extent;
-                        } else {
-                            if (remaining.size() < entry_head_wire_size) {
-                                return std::unexpected{fail(error_code::truncated_entry_header, std::nullopt, offset)};
-                            }
-                            size = read_trivial<entry_head>(remaining).size;
-                            if (size < entry_head_wire_size) {
-                                return std::unexpected{fail(error_code::invalid_entry_size, std::nullopt, offset)};
-                            }
-                        }
-                        if (size > remaining.size()) {
-                            return std::unexpected{fail(error_code::payload_out_of_bounds, std::nullopt, offset)};
-                        }
-                        const auto payload_size = static_cast<std::size_t>(size);
-                        cursor += payload_size;
-                        return field_view{.id = 0, .wire_type = field_wire_type,
-                            .offset = offset, .bytes = remaining.first(payload_size)};
+                        return next_stream_field(entry, cursor, field_extent, field_wire_type);
                     }
                 }();
                 if (!field) {
-                    if constexpr (!stream && field_node.fallback_type != std::meta::info{}) {
+                    if constexpr (descriptor.kind != schema_kind::stream && field_node.fallback_type != std::meta::info{}) {
                         if (field.error().code == error_code::missing_field) {
-                            using fallback = typename[:field_node.fallback_type:];
+                            using fallback = [:field_node.fallback_type:];
                             constexpr auto kind = field_node.role == schema_role::base
                                 ? reflected_entity_kind::base : reflected_entity_kind::member;
                             fallback::apply(entity_reference<field_node.entity, kind>(out), context);
@@ -311,11 +326,11 @@ namespace srl::detail {
                     }
                     return field.error();
                 }
-                if (auto status = field_codec<Tree, child>::decode(*field, out, context, budget); status) {
+                if (auto status = field_codec<Tree, child>::decode(*field, out, context); status) {
                     return status;
                 }
             }
-            if constexpr (stream) {
+            if constexpr (descriptor.kind == schema_kind::stream) {
                 if (cursor != entry.content().size()) {
                     return fail(error_code::trailing_bytes, std::nullopt, entry.content_offset() + cursor);
                 }
@@ -354,7 +369,7 @@ namespace srl::detail {
 
     consteval bool encoding_needs_cache(const schema_tree &tree, std::size_t node) {
         const auto &descriptor = tree.node(node);
-        if (descriptor.kind == schema_kind::container || descriptor.encode_extent == std::dynamic_extent) {
+        if (descriptor.kind == schema_kind::container || descriptor.encode_extent.is_dynamic()) {
             return true;
         }
         for (auto child: tree.children(node)) {
@@ -368,21 +383,20 @@ namespace srl::detail {
     template<const schema_tree &Tree, std::size_t Node>
     struct container_slot_plans {
         using value_type = node_value_t<Tree, Node>;
-        static constexpr auto static_extent = Tree.node(Node).encode_extent;
-        static constexpr auto wire_type = Tree.node(Node).wire_type;
+
         std::vector<typename value_codec<Tree, Node>::encode_plan> plans;
 
-        std::expected<szt, error> prepare(const value_type &value, const serialization_context &context) {
+        using prepare_result = value_codec<Tree, Node>::encode_plan::prepare_result;
+        using encode_result = value_codec<Tree, Node>::encode_plan::encode_result;
+
+        prepare_result prepare(const value_type &value, const serialization_context &context) {
             auto &plan = plans.emplace_back();
-            if (auto status = plan.prepare(value, context); status) {
-                return std::unexpected{status};
-            }
-            return plan.size;
+            return plan.prepare(value, context);
         }
 
         szt size(std::size_t index) const noexcept { return plans[index].size; }
 
-        error encode(std::size_t index, std::span<std::byte, static_extent> destination, const value_type &value) const {
+        encode_result encode(std::size_t index, std::span<std::byte, Tree.node(Node).encode_extent.value> destination, const value_type &value) const {
             return plans[index].encode(destination, value);
         }
     };
@@ -391,16 +405,18 @@ namespace srl::detail {
         requires (!encoding_needs_cache(Tree, Node))
     struct container_slot_plans<Tree, Node> {
         using value_type = node_value_t<Tree, Node>;
-        static constexpr auto static_extent = Tree.node(Node).encode_extent;
-        static constexpr auto wire_type = Tree.node(Node).wire_type;
 
-        std::expected<szt, error> prepare(const value_type &, const serialization_context &) {
-            return static_extent;
+        using prepare_result = always_success;
+        using encode_result = value_codec<Tree, Node>::encode_plan::encode_result;
+
+        prepare_result prepare(const value_type &, const serialization_context &) { return {}; }
+
+        constexpr szt size(std::size_t) const noexcept {
+            constexpr szt extent = Tree.node(Node).encode_extent.value;
+            return extent;
         }
 
-        constexpr szt size(std::size_t) const noexcept { return static_extent; }
-
-        error encode(std::size_t, std::span<std::byte, static_extent> destination, const value_type &value) const {
+        encode_result encode(std::size_t, std::span<std::byte, Tree.node(Node).encode_extent.value> destination, const value_type &value) const {
             return typename value_codec<Tree, Node>::encode_plan{}.encode(destination, value);
         }
     };
@@ -409,57 +425,73 @@ namespace srl::detail {
         requires (Tree.node(Node).kind == schema_kind::container)
     struct value_codec<Tree, Node> {
         using value_type = node_value_t<Tree, Node>;
-        static constexpr auto descriptor = Tree.node(Node);
-        static constexpr auto static_extent = descriptor.encode_extent;
+        static constexpr schema_node descriptor = Tree.node(Node);
 
         struct encode_plan {
             struct slots_type;
             consteval {
                 define_plan_members(^^slots_type, ^^container_slot_plans, std::meta::reflect_object(Tree), Tree, Node);
             }
-            static constexpr auto members = std::define_static_array(
+            static constexpr std::span<const std::meta::info> members = std::define_static_array(
                 std::meta::nonstatic_data_members_of(^^slots_type, std::meta::access_context::current()));
-            static constexpr auto static_extent = value_codec::static_extent;
-            [[no_unique_address]] slots_type slots;
-            szt size = static_extent == std::dynamic_extent ? entry_head_wire_size : static_extent;
-            std::uint32_t slot_count{};
 
-            error prepare(const value_type &value, const serialization_context &context) {
-                error status{};
-                detail::for_each_container_slot(value, [&]<std::size_t Slot>(const auto &slot) {
-                    if (status) { return; }
-                    if (slot_count == entry_metadata::max_mapping_count) {
-                        status = fail(error_code::too_many_mappings, slot_count);
-                        return;
-                    }
-                    auto plan_size = slots.[:members[Slot]:].prepare(slot, context);
-                    if (!plan_size) {
-                        status = detail::locate_error(plan_size.error(), slot_count);
-                        return;
-                    }
-                    if constexpr (static_extent == std::dynamic_extent) {
-                        static constexpr szt maximum = maximum_entry_size;
-                        static constexpr szt mapping_size = entry_mapping_wire_size;
-                        if (size > maximum - mapping_size) {
-                            status = fail(error_code::entry_too_large, slot_count);
-                            return;
+            SRL_NO_UNIQUE_ADDRESS slots_type slots;
+            using prepare_result = status_type<descriptor.element_count == 0
+                || (descriptor.element_count != std::dynamic_extent && descriptor.encode_extent.value != std::dynamic_extent
+                    && plans_always_succeed<members, true>())>;
+            using encode_result = status_type<descriptor.element_count == 0
+                || plans_always_succeed<members, false>()>;
+            SRL_NO_UNIQUE_ADDRESS cond_value<
+                szt,
+                descriptor.encode_extent.value == std::dynamic_extent,
+                descriptor.encode_extent.value>
+            size{entry_head_wire_size};
+
+            SRL_NO_UNIQUE_ADDRESS cond_value<
+                std::uint32_t,
+                descriptor.element_count == std::dynamic_extent,
+                descriptor.element_count == std::dynamic_extent ? 0 : static_cast<std::uint32_t>(descriptor.element_count * descriptor.mapping_group_size)>
+            slot_count;
+
+            prepare_result prepare(const value_type &value, const serialization_context &context) {
+                prepare_result status{};
+                std::uint32_t slot_index{};
+                if constexpr (descriptor.element_count != 0) {
+                    detail::for_each_container_slot(value, [&]<std::size_t Slot>(const auto &slot) {
+                        if constexpr (std::same_as<prepare_result, error>) {
+                            if (status) { return; }
                         }
-                        const auto size_with_mapping = size + mapping_size;
-                        if (*plan_size > maximum - size_with_mapping) {
-                            status = fail(error_code::entry_too_large, slot_count);
-                            return;
+                        if constexpr (descriptor.element_count == std::dynamic_extent) {
+                            if (slot_index == entry_metadata::max_mapping_count) {
+                                status = fail(error_code::too_many_mappings, slot_index);
+                                return;
+                            }
                         }
-                        size = size_with_mapping + *plan_size;
-                    }
-                    ++slot_count;
-                });
+                        auto &plans = slots.[:members[Slot]:];
+                        if constexpr (auto prepared = plans.prepare(slot, context); std::same_as<decltype(prepared), error>) {
+                            if (prepared) {
+                                status = detail::locate_error(prepared, slot_index);
+                                return;
+                            }
+                        }
+                        if constexpr (descriptor.encode_extent.value == std::dynamic_extent) {
+                            const auto plan_size = plans.size(slot_index / descriptor.mapping_group_size);
+                            if (auto failure = append_encoded_size(size, plan_size, entry_mapping_wire_size, slot_index); failure) {
+                                status = failure;
+                                return;
+                            }
+                        }
+                        ++slot_index;
+                    });
+                }
+                slot_count = slot_index;
                 return status;
             }
 
-            error encode(std::span<std::byte, static_extent> destination, const value_type &value) const {
+            encode_result encode(std::span<std::byte, descriptor.encode_extent.value> destination, const value_type &value) const {
                 constexpr auto group_size = descriptor.mapping_group_size;
                 constexpr auto wire_kind = descriptor.wire_kind;
-                write_trivial(destination, entry_head{
+                detail::write_trivial(destination, entry_head{
                     .size = size,
                     .metadata = {slot_count, wire_kind},
                     .wire_type = descriptor.wire_type,
@@ -468,54 +500,55 @@ namespace srl::detail {
                     + static_cast<std::size_t>(slot_count) * entry_mapping_wire_size;
                 std::size_t index{};
                 szt address{};
-                error status{};
-                detail::for_each_container_slot(value, [&]<std::size_t Slot>(const auto &slot) {
-                    if (status) { return; }
-                    const auto &plans = slots.[:members[Slot]:];
-                    const auto plan_index = index / group_size;
-                    const auto plan_size = plans.size(plan_index);
-                    write_trivial(destination.subspan(entry_head_wire_size + index * entry_mapping_wire_size),
-                        entry_mapping{.id = static_cast<id_type>(index), .wire_type = plans.wire_type, .offset = address});
-                    status = plans.encode(plan_index,
-                        payload_span<plans.static_extent>(destination, content_offset + address, plan_size), slot);
-                    if (status) {
-                        status = locate_error(status, static_cast<id_type>(index), content_offset + address);
-                        return;
-                    }
-                    address += plan_size;
-                    ++index;
-                });
+                encode_result status{};
+                if constexpr (descriptor.element_count != 0) {
+                    detail::for_each_container_slot(value, [&]<std::size_t Slot>(const auto &slot) {
+                        if constexpr (std::same_as<encode_result, error>) {
+                            if (status) { return; }
+                        }
+                        const auto &plans = slots.[:members[Slot]:];
+                        constexpr type_hash_type slot_wire_type = Tree.node(Tree.child(Node, Slot)).wire_type;
+                        constexpr szt slot_extent = Tree.node(Tree.child(Node, Slot)).encode_extent.value;
+                        const auto plan_index = index / group_size;
+                        const auto plan_size = plans.size(plan_index);
+                        detail::write_trivial(destination.subspan(entry_head_wire_size + index * entry_mapping_wire_size),
+                            entry_mapping{.id = static_cast<id_type>(index), .wire_type = slot_wire_type, .offset = address});
+                        if constexpr (auto encoded = plans.encode(plan_index,
+                            detail::payload_span<slot_extent>(destination, content_offset + address, plan_size), slot);
+                            std::same_as<decltype(encoded), error>) {
+                            if (encoded) {
+                                status = locate_error(encoded, static_cast<id_type>(index), content_offset + address);
+                                return;
+                            }
+                        }
+                        address += plan_size;
+                        ++index;
+                    });
+                }
                 return status;
             }
         };
 
         [[nodiscard]] static error decode(
             std::span<const std::byte> source, value_type &out,
-            const serialization_context &context, decode_budget &budget, std::optional<id_type> id = std::nullopt, szt offset = 0) {
+            const serialization_context &context) {
             auto entry = parse_entry(source);
-            auto status = entry ? decode_entry(*entry, out, context, budget) : entry.error();
-            return status ? locate_error(status, id, offset) : error{};
+            return entry ? value_codec::decode_entry(*entry, out, context) : entry.error();
         }
 
         [[nodiscard]] static error decode_entry(
             const entry_view &entry, value_type &out,
-            const serialization_context &context, decode_budget &budget) {
+            const serialization_context &context) {
             using T = value_type;
             using traits = container_traits<T>;
             constexpr auto group_size = descriptor.mapping_group_size;
             constexpr auto fixed_count = descriptor.element_count;
             constexpr auto duplicate_mode = descriptor.duplicates;
-            if (entry.head().kind() != descriptor.wire_kind) {
-                return fail(error_code::entry_kind_mismatch, std::nullopt, 11);
-            }
-            if (entry.head().wire_type != descriptor.wire_type) {
-                return fail(error_code::type_mismatch, std::nullopt, 12);
+            if (auto status = validate_entry_type(entry, descriptor.wire_kind, descriptor.wire_type); status) {
+                return status;
             }
 
             const auto element_count = entry.head().mapping_count() / group_size;
-            if (!budget.consume(element_count, sizeof(typename traits::element_type))) {
-                return fail(error_code::resource_limit_exceeded, std::nullopt, 8);
-            }
             if constexpr (fixed_count != std::dynamic_extent) {
                 if (element_count != fixed_count) {
                     return fail(error_code::fixed_container_size_mismatch, std::nullopt, 8);
@@ -525,22 +558,18 @@ namespace srl::detail {
                 detail::reserve_container(out, element_count);
             }
 
-            const auto duplicates = duplicate_mode == schema_duplicates::inherit
-                ? context.config.duplicates
-                : (duplicate_mode == schema_duplicates::reject ? duplicate_policy::reject : duplicate_policy::deduplicate);
+            const auto duplicates = resolve_duplicates(duplicate_mode, context.config.duplicates);
             auto decode_slot = [&]<std::size_t Slot>(std::size_t index, auto &value) -> error {
                 const auto slot = entry.at(index);
                 constexpr auto slot_wire_type = Tree.node(Tree.child(Node, Slot)).wire_type;
                 if (slot.wire_type != slot_wire_type) {
                     return fail(error_code::type_mismatch, static_cast<id_type>(index), slot.offset);
                 }
-                return value_codec<Tree, Tree.child(Node, Slot)>::decode(
-                    slot.bytes,
-                    value,
-                    context,
-                    budget,
-                    static_cast<id_type>(index),
-                    slot.offset);
+                if (auto status = value_codec<Tree, Tree.child(Node, Slot)>::decode(
+                    slot.bytes, value, context); status) {
+                    return detail::locate_error(status, static_cast<id_type>(index), slot.offset);
+                }
+                return {};
             };
 
             if constexpr (group_size == 1) {
@@ -604,29 +633,31 @@ namespace srl::detail {
 
     template<typename T>
     struct root_codec {
-        static constexpr auto &tree = schema<T>::tree;
-        static constexpr auto node = schema<T>::value;
-        static constexpr auto static_extent = tree.node(tree.root).encode_extent;
+        static constexpr schema_tree tree = schema(^^T).tree;
+        static constexpr szt node = tree.child(tree.root, 0); //TODO rename it as node_idx ?
 
         struct encode_plan {
-            static constexpr auto static_extent = root_codec::static_extent;
-            typename value_codec<tree, node>::encode_plan payload;
-            szt size{};
+            static constexpr szt static_extent = schema(^^T).tree.node(schema(^^T).root).encode_extent.value;
+            SRL_NO_UNIQUE_ADDRESS value_codec<tree, node>::encode_plan payload;
+            SRL_NO_UNIQUE_ADDRESS cond_value<szt, static_extent == std::dynamic_extent, static_extent> size;
 
-            error prepare(const T &value, const serialization_context &context) {
-                if (auto status = payload.prepare(value, context); status) { return status; }
-                if constexpr (static_extent != std::dynamic_extent) {
-                    size = static_extent;
-                } else {
+            using prepare_result = decltype(payload)::prepare_result;
+            using encode_result = decltype(payload)::encode_result;
+
+            prepare_result prepare(const T &value, const serialization_context &context) {
+                if constexpr (auto status = payload.prepare(value, context); std::same_as<decltype(status), error>) {
+                    if (status) { return status; }
+                }
+                if constexpr (static_extent == std::dynamic_extent) {
                     size = payload.size;
                 }
                 return {};
             }
 
-            error encode(std::span<std::byte, static_extent> destination, const T &value) const {
+            encode_result encode(std::span<std::byte, static_extent> destination, const T &value) const {
                 if constexpr (tree.node(node).kind == schema_kind::leaf) {
                     constexpr auto type_hash_value = tree.node(node).wire_type;
-                    write_trivial(destination, entry_head{
+                    detail::write_trivial(destination, entry_head{
                         .size = size,
                         .metadata = {0, entry_kind::leaf},
                         .wire_type = type_hash_value,
@@ -639,19 +670,21 @@ namespace srl::detail {
         };
 
         [[nodiscard]] static error decode_entry(
-            const entry_view &entry, T &out, const serialization_context &context, decode_budget &budget) {
+            const entry_view &entry, T &out, const serialization_context &context) {
             constexpr auto type_hash_value = tree.node(node).wire_type;
             if constexpr (tree.node(node).kind == schema_kind::leaf) {
-                if (entry.head().kind() != entry_kind::leaf) {
-                    return detail::fail(error_code::entry_kind_mismatch, std::nullopt, 11);
+                if (auto status = validate_entry_type(entry, entry_kind::leaf, type_hash_value); status) {
+                    return status;
                 }
-                if (entry.head().wire_type != type_hash_value) {
-                    return detail::fail(error_code::type_mismatch, std::nullopt, 12);
+                if (auto status = value_codec<tree, node>::decode(entry.content(), out, context); status) {
+                    return status.rebase(entry_head_wire_size);
                 }
-                return value_codec<tree, node>::decode(entry.content(), out, context, budget, std::nullopt, entry_head_wire_size);
+                return {};
             } else {
-                return value_codec<tree, node>::decode_entry(entry, out, context, budget);
+                return value_codec<tree, node>::decode_entry(entry, out, context);
             }
         }
     };
 }
+
+#undef SRL_NO_UNIQUE_ADDRESS

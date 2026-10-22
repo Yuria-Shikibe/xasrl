@@ -38,7 +38,7 @@ namespace srl::detail {
     }
 
     consteval type_hash_type leaf_wire_type(const schema_node &node) {
-        auto hash = hash_integer(scalar_wire_type(node.type), node.encode_extent);
+        auto hash = hash_integer(scalar_wire_type(node.type), node.encode_extent.span_extent());
         for (const auto field: node.object.fields()) {
             hash = hash_integer(hash, scalar_wire_type(field.type));
             hash = hash_integer(hash, field.wire_offset);

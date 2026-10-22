@@ -14,10 +14,10 @@ namespace srl_test {
         require(std::to_integer<std::uint8_t>((bytes)[11])
                     == std::to_underlying(srl::entry_kind::record),
                 "record entry classification is incorrect");
-        constexpr auto pair_wire_type = srl::schema<Pair>::node(srl::schema<Pair>::value).wire_type;
+        constexpr auto pair_wire_type = srl::schema(^^Pair).tree.node(srl::schema(^^Pair).value).wire_type;
         require(get_u32(bytes, 12) == pair_wire_type,
                 "entry type hash is incorrect");
-        constexpr auto integer_wire_type = srl::schema<int>::node(srl::schema<int>::value).wire_type;
+        constexpr auto integer_wire_type = srl::schema(^^int).tree.node(srl::schema(^^int).value).wire_type;
         require(get_u32(bytes, 16) == 1 && get_u32(bytes, 20) == integer_wire_type && get_u64(bytes, 24) == 0,
                 "first mapping is incorrect");
         require(get_u32(bytes, 32) == 2 && get_u32(bytes, 36) == integer_wire_type && get_u64(bytes, 40) == 4,

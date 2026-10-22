@@ -53,7 +53,7 @@ xmake run srl.tests
 - `context.hpp`：引用转换 handler 与序列化上下文。
 - `codec/base.hpp`：`leaf_codec` 接口及基础类型特化。
 - `codec/reflected.hpp`：由对象表示自动生成的叶节点 codec 特化。
-- `schema.hpp`：可序列化概念、`schema<T>` 编译期查询入口和静态校验。
+- `schema.hpp`：可序列化概念、`schema(^^T)` 编译期查询入口和静态校验。
 - `schema/model.hpp`：schema 节点、树视图及非模板查询接口。
 - `schema/build.hpp`：非模板 `consteval` 树构建、注解校验及尺寸计算。
 - `schema_visualization.hpp`：基于 schema 树生成结构文本。
@@ -65,7 +65,7 @@ xmake run srl.tests
 - `storage/byte_buffer.hpp`：序列化结果使用的字节缓冲。
 - `serialization.hpp`：`serialize`、`deserialize` 与 `serialized_size` 公共 API。
 - `transaction.hpp`：保留 allocator 的事务副本与无异常提交定制。
-- `limits.hpp`：输入大小、容器元素数和累计元素存储预算。
+- `limits.hpp`：解码入口的输入大小限制。
 - `detail/object_layout_model.hpp`：纯对象布局数据模型，供 schema 描述使用。
 - `detail/object_layout.hpp`：对象布局构建、输入校验和有效成员复制。
 - `wire.hpp`、`core.hpp`：公开聚合入口。
@@ -92,12 +92,22 @@ if (auto status = srl::deserialize(bytes.span(), restored, context); status) {
 }
 ```
 
-两个操作都返回 `srl::error`，`error{}` 表示成功。没有返回新对象、非事务式解码、
+状态转为 `bool` 时，`true` 表示失败。`deserialize` 返回 `srl::error`，`error{}` 表示成功。
+`serialize` 在输出为精确长度的固定 span、且准备和编码均无可恢复错误时返回
+`srl::always_success`，其余情况返回 `srl::error`。推荐用 `auto` 保留返回类型，
+也可以通过隐式转换存为 `srl::error`。没有返回新对象、非事务式解码、
 对象直接存取文件的另一套入口，也不提供旧名称别名。
 
 `serialize` 支持 `byte_buffer&` 和 `std::span<std::byte, Extent>` 两种输出：
 缓冲重载自动调整长度并复用容量；span 重载要求长度精确匹配。编码开始后的错误或异常
 允许输出内容被修改，缓冲对象本身仍保持有效。输入及其引用的数据不得与输出缓冲重叠。
+
+`always_success` 是空状态类型，支持与 `error` 相同的布尔判断、`set_id` 和 `rebase`，
+只能隐式转换为 `error`，不能反向转换。它表示正常返回时没有错误，不表示 `noexcept`。
+自定义 leaf codec 的 `encode`、`decode` 可以分别返回这两种状态，且仍须接受精确长度的 span。
+库根据返回类型递归合并准备、编码和 payload 解码的成功保证；动态长度、格式、资源限制
+等输入边界校验仍返回 `error`。可通过 `decltype` 判断具体操作的返回类型，不能仅凭 `T`
+断言整个反序列化过程恒成功。
 
 `deserialize` 接受可写或只读、定长或动态的字节 span，采用复制目标、解码临时对象、
 成功后提交的事务语义；错误或异常不改变原目标。目标必须满足 `transactional<T>`，
@@ -169,10 +179,11 @@ bit-field 和没有序列化规则的字段都会使 `schema_valid(^^T)` 返回 
 该策略保存在 `schema_node::fallback_type`，编解码与 schema 展示共同读取它。
 
 错误的 `offset` 是相对根 entry 的字节偏移；嵌套 codec 每层只累计一次 payload 起点。
+`decode` 不传递预算、字段 ID 或偏移参数；调用方仅在解码失败时补充错误位置。
 `error.id` 是 `std::optional<id_type>`，没有 ID 的结构错误与真实字段 ID `0` 明确区分。
 自定义 codec 返回相对自身输入的偏移，库负责转换为根偏移。
 `error.system_error` 仅在系统调用失败时包含 `std::error_code`；成功路径不初始化系统错误分类。
-`schema<T>::tree`、对象布局和枚举策略只保存合法元数据，不再包含 `valid` 标志。
+`schema(^^T).tree`、对象布局和枚举策略只保存合法元数据，不再包含 `valid` 标志。
 构建器遇到错误立即抛出编译期异常，停止遍历；只有成功后才固化元数据数组。
 GCC 的异常诊断包含错误原因、根类型到出错实体的路径，以及可用的字段 ID、冲突字段或 mask 信息。
 `schema_valid(^^T)` 保留非报错探测用途；`inspect_schema(^^T)` 捕获库自身的 schema 异常并返回
@@ -186,12 +197,9 @@ GCC 的异常诊断包含错误原因、根类型到出错实体的路径，以�
 ./tests/compile_fail/run.ps1 -Compiler C:/msys64/ucrt64/bin/x86_64-w64-mingw32-g++.exe
 ```
 
-解码预算放在 `context.config.limits`：默认输入上限 256 MiB、单容器 1,048,576 个元素、
-一次操作累计 4,194,304 个元素，以及 512 MiB 的累计元素存储。游戏加载器可以按资源类别
-显式调整这些值。元素存储按所访问容器的 `count * sizeof(element_type)` 累计，包含固定
-容器和重复输入元素；它不包含分配器 bookkeeping、目标事务副本或业务 callback 的分配，
-因此不是进程堆内存的硬上限。预算在容器 reserve／构造元素前检查，嵌套容器共享一次操作
-的预算，超限返回 `resource_limit_exceeded`。根字节边界在复制目标之前验证。
+`context.config.limits.max_input_bytes` 控制解码输入大小，默认上限 256 MiB，
+超限返回 `resource_limit_exceeded`。输入大小和根 entry 的字节边界在复制目标之前验证。
+解码不再维护单容器元素数、累计元素数或累计元素存储预算。
 
 ### 自动顺序 ID
 
@@ -477,9 +485,30 @@ struct leaf {
 不再回退到逐基类、逐成员调用子对象 codec。需要按实体顺序编码的类型应改用 `auto_seq`。
 
 编译期生成的 `schema_node::object` 记录每个标量成员的对象偏移、wire 偏移、尺寸和类型。
-自动和强制 leaf 共用此布局：读取先验证 bool／枚举，再复制有效成员；非法对象表示
+自动和强制 leaf 共用此布局：默认读取先验证 bool／枚举，再复制有效成员；非法对象表示
 不会进入 C++ 对象。无 padding、无 transient 的布局仍可合并为一次 `memcpy`。
 包含 union 的自动对象布局无效，必须使用能表达活动分支的自定义 codec。
+
+`[[=srl::tag::bypass_validation{}]]` 可标记类型、成员或基类，跳过该序列化子树的
+内建标量值域检查，包括 bool 的 `0/1` 检查、枚举成员检查和 flags 掩码检查：
+
+```cpp
+struct [[=srl::tag::auto_seq{}]] TrustedFields {
+    [[=srl::tag::bypass_validation{}]]
+    std::vector<Mode> trusted_modes;
+    Mode checked_mode; // 此字段仍校验
+};
+```
+
+标记向嵌套 record、stream、容器元素／键值、数组和对象布局成员传播；字段转换时作用于
+转换后的存储子树。类型上的标记作用于该类型的所有序列化使用位置，字段上的标记仅作用于
+该字段；子节点不能重新开启已跳过的检查。重复标记、非序列化成员或 transient 成员上的
+标记会在编译期报错。该选项不改变编码字节、尺寸或 wire 契约标识。
+
+调用方须保证输入具有合法的 C++ 值表示，尤其 bool 及 bool 底层枚举的字节仍须为 `0/1`；
+该标记不提供非法字节的归一化语义。长度、偏移、溢出、格式、资源限额和 schema 检查保留，
+自定义 `leaf_codec` 和转换 handler 仍完整执行。内建解码的返回类型根据有效策略推导：
+没有剩余值域检查的固定尺寸 payload 可返回 `always_success`，外层解析仍可能返回错误。
 
 自动叶节点类型可以用 `transient` 排除仅供运行时使用的成员：
 
@@ -657,18 +686,20 @@ if (auto status = srl::deserialize(block->span(), restored, context); status) {
 
 ## 编译期 Schema 树
 
-`schema<T>::tree` 是统一的编译期结构描述。`root` 表示根节点，`value` 表示实际值节点；
-leaf 根节点额外包含 entry header，而嵌套 leaf 值仅包含 payload。通过 `node(index)`、
-`children(index)` 和 `child(index, ordinal)` 查询节点及子节点，索引始终属于同一棵树。
+`schema(^^T).tree` 是统一的编译期结构描述。`root` 表示根节点，`value` 表示实际值节点；
+leaf 根节点额外包含 entry header，而嵌套 leaf 值仅包含 payload。通过 `tree.node(index)`、
+`tree.children(index)` 和 `tree.child(index, ordinal)` 查询节点及子节点，索引始终属于同一棵树。
 
 ```cpp
-using description = srl::schema<Profile>;
+constexpr srl::schema description(^^Profile);
+// 类型标签入口保留 reflected_stream<T> 的默认判断。
+constexpr srl::schema typed_description(std::in_place_type<Profile>);
 static_assert(srl::schema_valid(^^Profile));
-constexpr auto value = description::value;
-constexpr auto first = description::child(value, 0);
-constexpr auto field_id = description::node(first).id;
-constexpr auto stored_type = description::node(first).type; // std::meta::info
-constexpr auto encoded_size = description::node(description::root).encode_extent;
+constexpr auto value = description.value;
+constexpr auto first = description.tree.child(value, 0);
+constexpr auto field_id = description.tree.node(first).id;
+constexpr auto stored_type = description.tree.node(first).type; // std::meta::info
+constexpr auto encoded_size = description.tree.node(description.root).encode_extent;
 ```
 
 节点包含 wire 分类、字段/基类反射信息、内存与存储类型、转换选项、容器槽位与数量约束。
@@ -691,6 +722,9 @@ record 子节点按字段 ID 排序，stream 子节点按加载顺序排列；�
 `enum_contains` 内部保存无指针的 `std::array` 值，分区使用有符号偏置后的无符号排序键。
 事务聚合克隆按反射生成的初始化表定位成员和数组元素，保持原生数组的 brace elision 与 allocator。
 schema 不保存对象、转换结果或运行期 handler；这些状态仍由编码计划及上下文持有。
+codec 与编码计划直接从 schema 节点读取字段 ID、wire type 和尺寸，不通过子计划转发这些元数据。
+非模板 `detail/codec_support.hpp` 负责公共 entry 类型检查、stream 切片、尺寸累加和重复策略选择；
+实际对象操作、计划存储布局和成功/失败状态类型仍由模板生成。
 容器元素是否需要编码缓存也由该树推导：leaf 以及不含转换或容器的定长 record/stream
 使用空槽位计划，不为每个元素分配缓存；转换结果和动态布局仍在准备阶段缓存，避免重复计算。
 
