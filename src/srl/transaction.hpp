@@ -6,8 +6,8 @@
 #include <memory>
 #include <meta>
 #include <ranges>
-#include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "detail/reflection.hpp"
 
@@ -21,97 +21,110 @@ namespace srl {
         template<typename T>
         concept has_adl_swap = requires(T &left, T &right) { swap(left, right); };
 
+        // These probes preserve C++ lookup and user customization semantics.
         template<typename T>
-        consteval bool transaction_commit_supported() {
-            if constexpr (std::is_nothrow_swappable_v<T>) {
-                return true;
-            } else if constexpr (std::is_aggregate_v<T> && !has_adl_swap<T> && !std::is_array_v<T>) {
-                bool supported = true;
-                for_each_reflected_entity<T>([&]<std::meta::info Entity, reflected_entity_kind> {
-                    using member = reflected_entity_value_t<Entity>;
-                    supported &= requires(member &left, member &right) {
-                        { transaction_traits<member>::commit(left, right) } noexcept;
-                    };
-                });
-                return supported;
-            } else {
+        concept has_transaction_commit = requires(T &left, T &right) {
+            { transaction_traits<T>::commit(left, right) } noexcept;
+        };
+
+        consteval bool transaction_commit_supported(std::meta::info type) {
+            if (std::meta::is_nothrow_swappable_type(type)) { return true; }
+            if (!std::meta::is_aggregate_type(type) || std::meta::is_array_type(type)
+                || std::meta::extract<bool>(std::meta::substitute(^^has_adl_swap, {type}))) {
                 return false;
             }
+            for (auto entity: reflected_entities(type)) {
+                const auto member = std::meta::remove_cvref(std::meta::type_of(entity));
+                if (!std::meta::extract<bool>(std::meta::substitute(^^has_transaction_commit, {member}))) {
+                    return false;
+                }
+            }
+            return true;
         }
 
+        enum class allocator_domain { absent, preserved, changed };
+
         template<typename T>
-        consteval bool copy_preserves_swap_domain() {
+        inline constexpr allocator_domain allocator_copy_domain = [] consteval {
             if constexpr (requires { typename T::allocator_type; }) {
                 using traits = std::allocator_traits<typename T::allocator_type>;
-                return traits::is_always_equal::value || traits::propagate_on_container_swap::value;
-            } else if constexpr (std::is_array_v<T>) {
-                return copy_preserves_swap_domain<std::remove_extent_t<T>>();
-            } else if constexpr (std::is_class_v<T>) {
-                bool safe = true;
-                for_each_reflected_entity<T>([&]<std::meta::info Entity, reflected_entity_kind> {
-                    safe &= copy_preserves_swap_domain<reflected_entity_value_t<Entity>>();
-                });
-                return safe;
+                return traits::is_always_equal::value || traits::propagate_on_container_swap::value
+                    ? allocator_domain::preserved : allocator_domain::changed;
             } else {
-                return !std::is_union_v<T>;
+                return allocator_domain::absent;
             }
+        }();
+
+        consteval bool copy_preserves_swap_domain(std::meta::info type) {
+            const auto allocator = std::meta::extract<allocator_domain>(
+                std::meta::substitute(^^allocator_copy_domain, {type}));
+            if (allocator != allocator_domain::absent) { return allocator == allocator_domain::preserved; }
+            if (std::meta::is_array_type(type)) {
+                return copy_preserves_swap_domain(std::meta::remove_extent(type));
+            }
+            if (std::meta::is_class_type(type)) {
+                for (auto entity: reflected_entities(type)) {
+                    if (!copy_preserves_swap_domain(std::meta::remove_cvref(std::meta::type_of(entity)))) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            return !std::meta::is_union_type(type);
         }
 
-        template<typename T>
-        consteval auto transaction_entities() {
-            auto result = std::meta::bases_of(^^T, std::meta::access_context::unchecked());
-            for (auto member: std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unchecked())) {
-                result.push_back(member);
+        consteval std::size_t initializer_count(std::meta::info type) {
+            std::size_t count = 1;
+            while (std::meta::is_array_type(type)) {
+                count *= std::meta::extent(type);
+                type = std::meta::remove_extent(type);
+            }
+            return count;
+        }
+
+        struct aggregate_initializer {
+            std::meta::info entity;
+            std::size_t array_index;
+        };
+
+        consteval auto aggregate_initializers(std::meta::info type) {
+            std::vector<aggregate_initializer> result;
+            for (auto entity: reflected_entities(type)) {
+                const auto count = initializer_count(std::meta::remove_cvref(std::meta::type_of(entity)));
+                for (std::size_t index = 0; index != count; ++index) {
+                    result.push_back({entity, index});
+                }
             }
             return std::define_static_array(result);
         }
 
         template<typename T>
-        consteval std::size_t initializer_count() {
-            if constexpr (std::is_array_v<T>) {
-                return std::extent_v<T> * initializer_count<std::remove_extent_t<T>>();
-            } else {
-                return 1;
-            }
-        }
-
-        template<std::size_t Index, typename T>
-        auto clone_initializer(const T &value) {
-            if constexpr (std::is_array_v<T>) {
-                constexpr auto stride = initializer_count<std::remove_extent_t<T>>();
-                return clone_initializer<Index % stride>(value[Index / stride]);
+        auto clone_initializer(const T &value, std::size_t index) {
+            if constexpr (std::meta::is_array_type(^^T)) {
+                constexpr auto stride = initializer_count(std::meta::remove_extent(^^T));
+                return clone_initializer(value[index / stride], index % stride);
             } else {
                 return transaction_traits<T>::clone(value);
             }
         }
 
-        template<typename T>
-        consteval std::size_t aggregate_initializer_count() {
-            std::size_t count{};
-            template for (constexpr auto entity: transaction_entities<T>()) {
-                count += initializer_count<reflected_entity_value_t<entity>>();
-            }
-            return count;
-        }
-
-        template<typename T, std::size_t Index, std::size_t EntityIndex = 0, std::size_t Begin = 0>
+        template<const auto &Initializers, std::size_t Index, typename T>
         auto clone_aggregate_initializer(const T &value) {
-            constexpr auto entity = transaction_entities<T>()[EntityIndex];
-            constexpr auto count = initializer_count<reflected_entity_value_t<entity>>();
-            if constexpr (Index < Begin + count) {
-                constexpr auto kind = std::meta::is_base(entity)
-                    ? reflected_entity_kind::base : reflected_entity_kind::member;
-                return clone_initializer<Index - Begin>(entity_reference<entity, kind>(value));
-            } else {
-                return clone_aggregate_initializer<T, Index, EntityIndex + 1, Begin + count>(value);
-            }
+            constexpr auto entry = Initializers[Index];
+            constexpr auto kind = std::meta::is_base(entry.entity)
+                ? reflected_entity_kind::base : reflected_entity_kind::member;
+            constexpr auto array_index = entry.array_index;
+            return clone_initializer(entity_reference<entry.entity, kind>(value), array_index);
         }
 
-        template<typename T, std::size_t... Indices>
-        T clone_aggregate(const T &value, std::index_sequence<Indices...>) {
+        template<typename T>
+        T clone_aggregate(const T &value) {
+            static constexpr auto initializers = aggregate_initializers(^^T);
             // Brace elision initializes native array leaves without default construction
             // or assignment, both of which could select the wrong allocator.
-            return T{clone_aggregate_initializer<T, Indices>(value)...};
+            return [&]<std::size_t... Indices>(std::index_sequence<Indices...>) {
+                return T{clone_aggregate_initializer<initializers, Indices>(value)...};
+            }(std::make_index_sequence<initializers.size()>{});
         }
     }
 
@@ -121,26 +134,27 @@ namespace srl {
             requires std::copy_constructible<T> {
             if constexpr (requires { value.get_allocator(); T(value, value.get_allocator()); }) {
                 return T(value, value.get_allocator());
-            } else if constexpr (detail::copy_preserves_swap_domain<T>()) {
+            } else if constexpr (detail::copy_preserves_swap_domain(^^T)) {
                 return T(value);
             } else {
-                static_assert(std::is_aggregate_v<T>,
+                static_assert(std::meta::is_aggregate_type(^^T),
                     "allocator-bearing non-aggregate requires transaction_traits<T>");
-                return detail::clone_aggregate(value,
-                    std::make_index_sequence<detail::aggregate_initializer_count<T>()>{});
+                return detail::clone_aggregate(value);
             }
         }
 
         static void commit(T &out, T &staged) noexcept
-            requires (detail::transaction_commit_supported<T>()) {
-            if constexpr (std::is_nothrow_swappable_v<T>) {
+            requires (detail::transaction_commit_supported(^^T)) {
+            if constexpr (std::meta::is_nothrow_swappable_type(^^T)) {
                 std::ranges::swap(out, staged);
             } else {
-                detail::for_each_reflected_entity<T>([&]<std::meta::info Entity, detail::reflected_entity_kind Kind> {
-                    using member = detail::reflected_entity_value_t<Entity>;
-                    transaction_traits<member>::commit(detail::entity_reference<Entity, Kind>(out),
-                        detail::entity_reference<Entity, Kind>(staged));
-                });
+                template for (constexpr auto entity: std::define_static_array(detail::reflected_entities(^^T))) {
+                    constexpr auto kind = std::meta::is_base(entity)
+                        ? detail::reflected_entity_kind::base : detail::reflected_entity_kind::member;
+                    using member = typename[:std::meta::remove_cvref(std::meta::type_of(entity)):];
+                    transaction_traits<member>::commit(detail::entity_reference<entity, kind>(out),
+                        detail::entity_reference<entity, kind>(staged));
+                }
             }
         }
     };

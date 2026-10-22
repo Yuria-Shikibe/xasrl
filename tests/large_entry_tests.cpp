@@ -31,25 +31,31 @@ namespace srl_test {
         std::vector<int> dynamic;
     };
 
-    static_assert(srl::schema_valid<LargeLeaf>());
+    static_assert(srl::schema_valid(^^LargeLeaf));
     static_assert(srl::schema<LargeLeaf>::tree.node(0).encode_extent == large_extent + 16);
-    static_assert(!srl::schema_valid<SizingLeaf<srl::detail::maximum_entry_size - 8>>());
-    static_assert(srl::schema_valid<std::array<int, srl::entry_metadata::max_mapping_count>>());
-    static_assert(!srl::schema_valid<std::array<int, srl::entry_metadata::max_mapping_count + 1>>());
+    static_assert(!srl::schema_valid(^^SizingLeaf<srl::detail::maximum_entry_size - 8>));
+    static_assert(srl::schema_valid(^^std::array<int, srl::entry_metadata::max_mapping_count>));
+    static_assert(!srl::schema_valid(^^std::array<int, srl::entry_metadata::max_mapping_count + 1>));
     static_assert([] consteval {
         srl::detail::schema_builder builder;
         return builder.add_size(large_extent, 16) == large_extent + 16
-            && builder.multiply_size(2, large_extent) == 2 * large_extent && builder.valid;
+            && builder.multiply_size(2, large_extent) == 2 * large_extent;
     }());
     static_assert([] consteval {
         srl::detail::schema_builder builder;
-        builder.add_size(srl::detail::maximum_entry_size, 1);
-        return !builder.valid;
+        try { builder.add_size(srl::detail::maximum_entry_size, 1); }
+        catch (const srl::detail::schema_failure &failure) {
+            return failure.issue().reason == srl::schema_error::extent_overflow;
+        }
+        return false;
     }());
     static_assert([] consteval {
         srl::detail::schema_builder builder;
-        builder.multiply_size(2, srl::detail::maximum_entry_size);
-        return !builder.valid;
+        try { builder.multiply_size(2, srl::detail::maximum_entry_size); }
+        catch (const srl::detail::schema_failure &failure) {
+            return failure.issue().reason == srl::schema_error::extent_overflow;
+        }
+        return false;
     }());
     static_assert(std::bit_cast<std::uint32_t>(srl::entry_metadata{0xffffff, srl::entry_kind::map})
                   == 0x05ffffffu);
@@ -127,8 +133,8 @@ namespace srl_test {
             srl::detail::write_trivial(bytes.span(), srl::entry_head{.size = 16, .metadata = {0, kind}});
             auto parsed = srl::detail::parse_entry(bytes.span());
             ASSERT_TRUE(parsed);
-            EXPECT_EQ(parsed->head.kind(), kind);
-            EXPECT_EQ(parsed->head.mapping_count(), 0u);
+            EXPECT_EQ(parsed->head().kind(), kind);
+            EXPECT_EQ(parsed->head().mapping_count(), 0u);
         }
         srl::byte_buffer pair{};
         const auto pair_status = srl::serialize(Pair{}, pair, default_context);

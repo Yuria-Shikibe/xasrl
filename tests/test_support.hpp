@@ -7,7 +7,7 @@
 namespace srl_test {
     inline const srl::serialization_context default_context;
     inline const srl::serialization_context rejecting_context{
-        srl::srl_ctx_config{
+        srl::serialization_config{
             .duplicates = srl::duplicate_policy::reject,
         }};
 

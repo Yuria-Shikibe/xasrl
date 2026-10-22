@@ -84,21 +84,21 @@ namespace stream_tests {
     };
 
     static_assert(srl::reflected_stream<Numbers> && !srl::reflected_record<Numbers>);
-    static_assert(srl::schema_valid<Empty>() && srl::schema_valid<Numbers>());
-    static_assert(srl::schema_valid<Nested>() && srl::schema_valid<Record>());
-    static_assert(srl::schema_valid<Converted>());
-    static_assert(srl::serialized_field_count<Numbers>() == 2);
-    static_assert(!srl::schema_valid<Conflict>() && !srl::schema_valid<ContainerConflict>());
-    static_assert(!srl::schema_valid<LeafConflict>() && !srl::schema_valid<Modes>());
-    static_assert(!srl::schema_valid<Duplicate>() && !srl::schema_valid<Pointer>());
-    static_assert(!srl::schema_valid<Reference>() && !srl::schema_valid<Bits>());
-    static_assert(!srl::schema_valid<Virtual>() && !srl::schema_valid<Missing>());
-    static_assert(!srl::schema_valid<Recursive>() && !srl::schema_valid<MissingField>());
-    static_assert(!srl::schema_valid<TransientConflict>() && !srl::schema_valid<FieldLeafConflict>());
-    static_assert(!srl::schema_valid<RepeatedField>() && !srl::schema_valid<LeafOwner>());
-    static_assert(srl::schema_valid<ForcedLeaf>() && srl::schema_valid<OverrideIds>());
-    static_assert(srl::schema_string<Nested>().contains("stream "));
-    static_assert(srl::schema_string<Numbers>().contains("[position 1]"));
+    static_assert(srl::schema_valid(^^Empty) && srl::schema_valid(^^Numbers));
+    static_assert(srl::schema_valid(^^Nested) && srl::schema_valid(^^Record));
+    static_assert(srl::schema_valid(^^Converted));
+    static_assert(srl::serialized_field_count(^^Numbers) == 2);
+    static_assert(!srl::schema_valid(^^Conflict) && !srl::schema_valid(^^ContainerConflict));
+    static_assert(!srl::schema_valid(^^LeafConflict) && !srl::schema_valid(^^Modes));
+    static_assert(!srl::schema_valid(^^Duplicate) && !srl::schema_valid(^^Pointer));
+    static_assert(!srl::schema_valid(^^Reference) && !srl::schema_valid(^^Bits));
+    static_assert(!srl::schema_valid(^^Virtual) && !srl::schema_valid(^^Missing));
+    static_assert(!srl::schema_valid(^^Recursive) && !srl::schema_valid(^^MissingField));
+    static_assert(!srl::schema_valid(^^TransientConflict) && !srl::schema_valid(^^FieldLeafConflict));
+    static_assert(!srl::schema_valid(^^RepeatedField) && !srl::schema_valid(^^LeafOwner));
+    static_assert(srl::schema_valid(^^ForcedLeaf) && srl::schema_valid(^^OverrideIds));
+    static_assert(srl::schema_string(^^Nested).contains("stream "));
+    static_assert(srl::schema_string(^^Numbers).contains("[position 1]"));
 
     TEST(AutoStream, WireLayoutAndApis) {
         srl::byte_buffer bytes{};
@@ -110,9 +110,9 @@ namespace stream_tests {
         EXPECT_EQ(seq.size() - bytes.size(), 2 * srl::detail::entry_mapping_wire_size);
         auto entry = srl::detail::parse_entry(bytes.span());
         ASSERT_TRUE(entry);
-        EXPECT_EQ(entry->head.kind(), srl::entry_kind::stream);
-        EXPECT_EQ(entry->head.mapping_count(), 0u);
-        EXPECT_TRUE(entry->mappings.empty());
+        EXPECT_EQ(entry->head().kind(), srl::entry_kind::stream);
+        EXPECT_EQ(entry->head().mapping_count(), 0u);
+        EXPECT_TRUE(entry->mappings().empty());
         EXPECT_EQ(get_u32(bytes, 16), 0x12345678u);
         EXPECT_EQ(std::to_integer<unsigned>(bytes.span()[20]), 0x22u);
         EXPECT_EQ(srl::serialized_size(Numbers{}, default_context), 22u);

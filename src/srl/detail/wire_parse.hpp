@@ -16,38 +16,53 @@ namespace srl::detail {
         std::span<const std::byte> bytes{};
     };
 
-    struct entry_view {
-        entry_head head{};
-        std::span<const std::byte> mappings{};
-        std::span<const std::byte> content{};
-        szt content_offset{};
+    class entry_view {
+        entry_head head_;
+        std::span<const std::byte> mappings_;
+        std::span<const std::byte> content_;
+        szt content_offset_;
+
+        entry_view(entry_head head, std::span<const std::byte> mappings,
+                   std::span<const std::byte> content, szt content_offset) noexcept
+            : head_(head), mappings_(mappings), content_(content), content_offset_(content_offset) {}
+
+        friend std::expected<entry_view, error> parse_entry(std::span<const std::byte> bytes);
+
+    public:
+        // The backing bytes must remain alive and unchanged while the view is used.
+        [[nodiscard]] const entry_head &head() const noexcept { return head_; }
+        [[nodiscard]] std::span<const std::byte> mappings() const noexcept { return mappings_; }
+        [[nodiscard]] std::span<const std::byte> content() const noexcept { return content_; }
+        [[nodiscard]] szt content_offset() const noexcept { return content_offset_; }
 
         [[nodiscard]] id_type mapping_id(std::size_t index) const noexcept {
             return read_trivial<entry_mapping>(
-                mappings.subspan(index * entry_mapping_wire_size)).id;
+                mappings_.subspan(index * entry_mapping_wire_size)).id;
         }
 
         [[nodiscard]] szt mapping_address(std::size_t index) const noexcept {
             return read_trivial<entry_mapping>(
-                mappings.subspan(index * entry_mapping_wire_size)).offset;
+                mappings_.subspan(index * entry_mapping_wire_size)).offset;
         }
 
         [[nodiscard]] field_view at(std::size_t index) const noexcept {
-            const auto begin = mapping_address(index);
-            const auto end = index + 1 == head.mapping_count()
-                                 ? content.size()
+            const auto mapping = read_trivial<entry_mapping>(
+                mappings_.subspan(index * entry_mapping_wire_size));
+            const auto begin = mapping.offset;
+            const auto end = index + 1 == head_.mapping_count()
+                                 ? content_.size()
                                  : mapping_address(index + 1);
             return field_view{
-                .id = mapping_id(index),
-                .wire_type = read_trivial<entry_mapping>(mappings.subspan(index * entry_mapping_wire_size)).wire_type,
-                .offset = content_offset + begin,
-                .bytes = content.subspan(begin, end - begin),
+                .id = mapping.id,
+                .wire_type = mapping.wire_type,
+                .offset = content_offset_ + begin,
+                .bytes = content_.subspan(begin, end - begin),
             };
         }
 
         [[nodiscard]] std::expected<field_view, error> find(id_type id) const noexcept {
             std::size_t first{};
-            std::size_t count = head.mapping_count();
+            std::size_t count = head_.mapping_count();
             while (count != 0) {
                 const auto step = count / 2;
                 const auto index = first + step;
@@ -58,7 +73,7 @@ namespace srl::detail {
                     count = step;
                 }
             }
-            if (first == head.mapping_count() || mapping_id(first) != id) {
+            if (first == head_.mapping_count() || mapping_id(first) != id) {
                 return std::unexpected{fail(error_code::missing_field, id)};
             }
             return at(first);
@@ -105,6 +120,9 @@ namespace srl::detail {
         const auto mapping_bytes = static_cast<std::size_t>(count) * entry_mapping_wire_size;
         const auto content_offset = entry_head_wire_size + mapping_bytes;
         const auto content_size = bytes.size() - content_offset;
+        if (count == 0 && kind != entry_kind::leaf && kind != entry_kind::stream && content_size != 0) {
+            return std::unexpected{fail(error_code::trailing_bytes, std::nullopt, content_offset)};
+        }
         id_type previous_id{};
         szt previous_address{};
         for (std::size_t index = 0; index != count; ++index) {
@@ -115,7 +133,8 @@ namespace srl::detail {
             if (byte_offset > content_size) {
                 return std::unexpected{fail(error_code::payload_out_of_bounds, id, header_offset + 8)};
             }
-            if (index != 0 && (previous_id >= id || previous_address > byte_offset)) {
+            if ((index == 0 && byte_offset != 0)
+                || (index != 0 && (previous_id >= id || previous_address > byte_offset))) {
                 return std::unexpected{fail(error_code::invalid_mapping_order, id, header_offset)};
             }
             if ((kind == entry_kind::sequence || kind == entry_kind::map) && id != index) {
@@ -126,10 +145,10 @@ namespace srl::detail {
         }
 
         return entry_view{
-            .head = head,
-            .mappings = bytes.subspan(entry_head_wire_size, mapping_bytes),
-            .content = bytes.subspan(content_offset),
-            .content_offset = content_offset,
+            head,
+            bytes.subspan(entry_head_wire_size, mapping_bytes),
+            bytes.subspan(content_offset),
+            content_offset,
         };
     }
 }

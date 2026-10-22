@@ -30,15 +30,15 @@ Run build commands from the repository root in PowerShell:
 
 ```powershell
 xmake                         # Incremental build of default targets
-xmake -b untitled2            # Explicit build of the executable
-xmake -b -r untitled2         # Force rebuild; -r means rebuild, not run
+xmake -b srl            # Explicit build of the executable
+xmake -b -r srl         # Force rebuild; -r means rebuild, not run
 ```
 
 Clean generated build outputs with:
 
 ```powershell
 xmake clean                   # Remove default targets' build outputs
-xmake clean untitled2          # Clean only this target
+xmake clean srl          # Clean only this target
 ```
 
 Build successfully before using an existing executable because it may be stale.
@@ -98,7 +98,8 @@ issues. Keep C++ exceptions enabled.
 - For code changes, build and run relevant examples with the configured GCC 16
   toolchain. Add compile-time checks for reflection/schema rules and focused
   runtime tests for round trips and recoverable malformed-input errors as those
-  facilities are implemented. No dedicated test target is currently configured.
+  facilities are implemented. Build the non-default GoogleTest target with
+  `xmake -b srl.tests`, then run it with `xmake run srl.tests`.
 - Report the commands actually run and their outcomes. If an unfinished
   experiment or toolchain issue blocks verification, report it explicitly;
   never claim success based on an old executable.

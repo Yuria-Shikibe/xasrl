@@ -2,10 +2,53 @@
 
 `srl` 是一个使用 C++26 静态反射实现的游戏对象序列化实验。
 
+## 格式与兼容性契约
+
+**本库不提供跨编译器兼容保证，也不提供同一编译器不同版本之间的兼容保证。**
+用户需要自行处理工具链升级、数据迁移和旧数据读取；相同 storage version 或 wire 类型标识
+不构成跨工具链兼容承诺。对象布局、基础类型宽度和反射类型名称都可能受工具链、ABI、
+编译选项影响。目前只支持 8-bit byte 和小端目标，不进行字节序转换。
+
+- record 按稳定字段 ID 匹配，未知字段忽略；目标缺失字段仅在显式 fallback 时补齐。
+  auto_seq 自动分配 ID，插入或移动声明可能改变后续 ID，持久化协议应显式管理 ID。
+- stream 按声明顺序消费，指纹包含字段名称、顺序和 wire 类型；改名或换序可能不兼容，
+  不提供未知字段跳过或缺失字段补齐。
+- wire 类型标识为 32 位哈希，存在碰撞可能，不是身份认证或完整性校验。record 的根标识
+  不包含字段集合，字段逐项校验；容器按元素类型匹配，不按容器实现匹配。枚举和自定义
+  leaf codec 使用去别名后的类型名称；flags 枚举还包含允许位掩码。
+- entry 使用紧凑布局：有 mapping 时第一项偏移必须为 0，后续偏移非递减，最后一个
+  payload 延伸到 content 末尾。零长度 payload 可以共享偏移；没有 mapping 的 record、
+  sequence 和 map 必须没有 content。leaf 和 stream 的 content 由各自 codec 校验。
+- parse_entry 只验证当前 entry 的结构、边界和 mapping，不递归验证未知字段的语义。
+  read_block / write_block 也只有字节结构验证；目标类型相关检查发生在 deserialize。
+  已验证视图只能由解析函数创建；它借用输入，使用期间输入必须存活且内容不变。
+- deserialize 的错误和异常不改变原目标；serialize 开始编码后允许输出部分更新。
+  文件写入通过临时文件提交，提交失败保留原文件。业务 callback 的外部副作用不在事务内。
+- 未参与序列化的普通成员及固定容器已有元素状态通过事务副本保留；动态容器重建元素，
+  不合并旧元素状态。fallback{} 使用字段类型 T{}，不会重新执行宿主成员初始化器。
+- 对象表示 leaf 要求满足布局约束；允许 padding 时写零。绕过指针检查仅保存地址表示，
+  用户负责地址有效性。当前 storage version 为 4，未实现压缩、CRC 或版本迁移。
+
+## 构建与验证
+
+使用现有 xmake GCC 16 MinGW 环境，不额外配置工具链：
+
+```powershell
+xmake -b srl
+xmake run srl
+xmake -b srl.tests
+xmake run srl.tests
+```
+
+必须构建成功后再运行对应程序。`srl.tests` 是非默认 GoogleTest 目标。
+
 ## 文件结构
 
 - `types.hpp`：公开基础类型、wire header、错误码与错误对象。
-- `annotations.hpp`：字段、叶节点类型和容器注解。
+- `conversion.hpp`：轻量转换描述、handler key 与重复项策略；只前置声明上下文。
+- `annotations.hpp`：字段、叶节点类型、flags 枚举和容器注解。
+- `enum.hpp`、`error.hpp`：枚举语义与错误码名称；`diagnostics.hpp` 提供按需错误格式化。
+- `wire_format.hpp`：wire 尺寸、版本与上限常量。
 - `container.hpp`：容器 traits、容器适配约束与插入工具。
 - `context.hpp`：引用转换 handler 与序列化上下文。
 - `codec/base.hpp`：`leaf_codec` 接口及基础类型特化。
@@ -14,17 +57,24 @@
 - `schema/model.hpp`：schema 节点、树视图及非模板查询接口。
 - `schema/build.hpp`：非模板 `consteval` 树构建、注解校验及尺寸计算。
 - `schema_visualization.hpp`：基于 schema 树生成结构文本。
-- `detail/reflection.hpp`：纯反射遍历、注解读取与类型分析工具。
+- `detail/reflection_facts.hpp`：共享反射事实、注解计数、指针分析和 leaf 元数据校验。
+- `detail/reflection.hpp`：模板反射访问、对象表示范围与自动 leaf 资格。
 - `detail/codec.hpp`：按节点类型集中组织编解码；`value_codec`、`field_codec` 和 `root_codec` 通过嵌套 `encode_plan` 管理编码缓存，通过静态 `decode` 解码。
-- `detail/utility.hpp`：无状态 wire、枚举、哈希和 trivial byte 工具。
+- `detail/utility.hpp`：哈希和 trivial byte 工具。
 - `detail/wire_parse.hpp`：已验证 entry 视图与 wire 解析。
 - `storage/byte_buffer.hpp`：序列化结果使用的字节缓冲。
 - `serialization.hpp`：`serialize`、`deserialize` 与 `serialized_size` 公共 API。
 - `transaction.hpp`：保留 allocator 的事务副本与无异常提交定制。
 - `limits.hpp`：输入大小、容器元素数和累计元素存储预算。
-- `detail/object_layout.hpp`：对象叶节点成员布局；供编码、输入校验和 schema 测试共用。
-- `wire.hpp`、`core.hpp`：保持稳定 include 路径的聚合入口。
+- `detail/object_layout_model.hpp`：纯对象布局数据模型，供 schema 描述使用。
+- `detail/object_layout.hpp`：对象布局构建、输入校验和有效成员复制。
+- `wire.hpp`、`core.hpp`：公开聚合入口。
 - `io.hpp`：只处理字节的磁盘块读写 `write_block`、`read_block`。
+
+依赖方向由轻量声明到实际执行：`types / conversion / annotations / object_layout_model`
+→ 共享反射事实与 schema 构建 → codec 与运行时 context → serialization 与事务提交。
+`schema/model.hpp` 不包含 handler 注册表、字节缓冲或对象布局算法；底层实现直接包含
+所需头文件，`core.hpp` 和 `wire.hpp` 仅作为调用方可选的聚合入口。文件 I/O 独立处理字节块。
 
 ## 编解码入口
 
@@ -106,7 +156,7 @@ struct Person {
 ```
 
 反射在编译期生成 ID 到字段的映射规则。重复 ID、没有转换规则的指针、引用、虚基类、
-bit-field 和没有序列化规则的字段都会使 `schema_valid<T>()` 返回 `false`，并在调用
+bit-field 和没有序列化规则的字段都会使 `schema_valid(^^T)` 返回 `false`，并在调用
 `serialize` 时触发编译期错误。
 
 解码记录时，以目标类型的字段 ID 为准：目标需要的字段必须存在，源对象中的未知字段
@@ -122,8 +172,19 @@ bit-field 和没有序列化规则的字段都会使 `schema_valid<T>()` 返回 
 `error.id` 是 `std::optional<id_type>`，没有 ID 的结构错误与真实字段 ID `0` 明确区分。
 自定义 codec 返回相对自身输入的偏移，库负责转换为根偏移。
 `error.system_error` 仅在系统调用失败时包含 `std::error_code`；成功路径不初始化系统错误分类。
-`schema_diagnostic<T>()` 返回编译期 schema 失败原因和相关实体，公开 API 的 `static_assert`
-直接使用该诊断；测试可以检查 `schema<T>::tree.issue` 的结构化原因。
+`schema<T>::tree`、对象布局和枚举策略只保存合法元数据，不再包含 `valid` 标志。
+构建器遇到错误立即抛出编译期异常，停止遍历；只有成功后才固化元数据数组。
+GCC 的异常诊断包含错误原因、根类型到出错实体的路径，以及可用的字段 ID、冲突字段或 mask 信息。
+`schema_valid(^^T)` 保留非报错探测用途；`inspect_schema(^^T)` 捕获库自身的 schema 异常并返回
+结构化 `schema_issue`（`reason`、`entity`、`path` 和 `detail`），成功时 `reason == schema_error::none`。
+`schema_diagnostic(^^T)` 将该报告格式化为静态字符串，可用于调用方自己的 `static_assert`。
+探测不返回部分构建的树，也不捕获用户自定义代码或编译器反射操作产生的其他异常。
+
+独立的编译失败测试检查实际 GCC 诊断；传入 xmake verbose 输出中选定的编译器，不修改工具链配置：
+
+```powershell
+./tests/compile_fail/run.ps1 -Compiler C:/msys64/ucrt64/bin/x86_64-w64-mingw32-g++.exe
+```
 
 解码预算放在 `context.config.limits`：默认输入上限 256 MiB、单容器 1,048,576 个元素、
 一次操作累计 4,194,304 个元素，以及 512 MiB 的累计元素存储。游戏加载器可以按资源类别
@@ -196,7 +257,7 @@ stream header 记录由字段顺序、名称和 wire 类型生成的布局指纹
 仍保留真实字段 ID。`deserialize` 失败时不改变目标对象。
 
 所有现有序列化和文件 API 均支持该模式；`reflected_stream<T>` 用于识别类型注解，
-`serialized_field_count<T>()` 返回非 transient 实体数，`schema_string<T>()` 展示加载顺序。
+`serialized_field_count(^^T)` 返回非 transient 实体数，`schema_string(^^T)` 展示加载顺序。
 这里的“流”指字节区间上的顺序消费，不提供分块或异步 I/O。
 
 ## 字段表示转换
@@ -210,8 +271,8 @@ struct conversion_tag {
 };
 ```
 
-保存路径为 `MemTy -> SrlTy -> bytes`，读取路径相反。标记不代替 `tag::field`，必须显式
-指定字段 ID；旧实验名称 `convertion_tag` 已修正为 `conversion_tag`。
+保存路径为 `MemTy -> SrlTy -> bytes`，读取路径相反。标记不代替字段选择：普通 record 仍需 `tag::field`，auto_seq / auto_stream
+可以使用自动选择的字段。
 
 ### 直接转换
 
@@ -306,6 +367,40 @@ context.register_handler(srl::handler_key<AssetReferenceKey>(), handler);
 编码，有嵌套 entry 时使用 `SrlTy` 的类型信息。handler 地址绝不持久化。改变 `SrlTy` 需要
 显式字段 ID 或业务版本迁移；mapping 中的 wire 类型标识会拒绝同尺寸但类型不同的字段。
 
+## Flags 枚举
+
+普通枚举只接受显式声明的枚举值。需要按位组合时，使用 `flags{0}`（或 `flags{}`）
+将所有声明枚举值按位或，自动推导允许位掩码：
+
+```cpp
+enum class [[=srl::tag::flags{0}]] Permissions : std::uint8_t {
+    read = 1, write = 2, special = 0x80,
+};
+```
+
+也可用非零 mask（如 `flags{0x83}`）显式指定允许位。最终 mask 必须非零；空枚举或
+仅包含零值的枚举无法推导有效 mask，在编译期拒绝。
+允许 mask 的任意子集，包括未命名的组合和零；未知位返回 `invalid_enum_value`。
+标记不会生成位运算符，也不会根据 operator| 猜测语义。底层类型必须是最多 64 位的无符号
+整数，mask 必须可表示，所有声明枚举值必须在 mask 内；重复标记、越界 mask 或不合法
+底层类型在 schema 构建时拒绝。普通字段、容器元素和对象表示 leaf 共用相同校验。
+
+## 错误展示
+
+`srl::error` 保持轻量，不在返回错误时分配文本。需要日志时显式包含并调用：
+
+```cpp
+#include "srl/diagnostics.hpp"
+
+auto text = srl::format_error(status);
+auto located = srl::format_error(status, "profile.active");
+// invalid_bool path=profile.active id=0 offset=123
+```
+
+输出包含错误码、可选 ID、根 entry 字节偏移，以及存在时的系统错误分类、数值和消息。
+调用方已知路径时可以传入第二个参数；函数不会仅凭 ID 猜测嵌套字段路径。
+格式化过程可以分配和抛异常，不影响原有编解码错误契约。
+
 ## 容器
 
 容器是独立于叶节点和反射记录的第三类 entry。库自动识别可重复遍历、可清空并可重新插入
@@ -341,7 +436,7 @@ struct srl::container_traits<MyContainer>
 
 ```cpp
 srl::serialization_context context{
-    srl::duplicate_policy::reject};
+    srl::serialization_config{.duplicates = srl::duplicate_policy::reject}};
 ```
 
 反射字段可用独立 tag 覆盖上下文策略：
@@ -568,7 +663,7 @@ leaf 根节点额外包含 entry header，而嵌套 leaf 值仅包含 payload。
 
 ```cpp
 using description = srl::schema<Profile>;
-static_assert(description::valid);
+static_assert(srl::schema_valid(^^Profile));
 constexpr auto value = description::value;
 constexpr auto first = description::child(value, 0);
 constexpr auto field_id = description::node(first).id;
@@ -587,14 +682,21 @@ record 子节点按字段 ID 排序，stream 子节点按加载顺序排列；�
 静态 extent 的 span；公共字节输入在边界检查长度后再转换，不截断过长的 payload。
 
 树构建、校验和尺寸计算使用非模板 `consteval` 函数与普通循环，结果固化为静态数组。
-模板仅连接 codec/容器适配接口、缓存根类型描述以及生成实际操作对象的代码。
+注解识别、叶类型资格、transient 复制区间、对象布局、wire ID 和事务聚合初始化表同样
+直接操作反射值。`schema_valid(^^T)`、`inspect_schema(^^T)`、`schema_diagnostic(^^T)`、
+`serialized_field_count(^^T)`、`schema_string(^^T)` 和 `type_hash(^^T)` 均为非模板入口。
+模板保留在 codec/容器/事务自定义接口、表达式合法性检查、静态结果存储以及实际对象操作边界。
+枚举值提取要求精确枚举类型，因此每个枚举保留一个提取函数；枚举值自身不再作为模板参数。
+`make_enum_partitions(info, width)` 返回编译期 vector 值，调用方负责固化；
+`enum_contains` 内部保存无指针的 `std::array` 值，分区使用有符号偏置后的无符号排序键。
+事务聚合克隆按反射生成的初始化表定位成员和数组元素，保持原生数组的 brace elision 与 allocator。
 schema 不保存对象、转换结果或运行期 handler；这些状态仍由编码计划及上下文持有。
 容器元素是否需要编码缓存也由该树推导：leaf 以及不含转换或容器的定长 record/stream
 使用空槽位计划，不为每个元素分配缓存；转换结果和动态布局仍在准备阶段缓存，避免重复计算。
 
 ## Schema 可视化
 
-`schema_string<T>()` 在编译期遍历上述 schema 树，并返回具有静态存储期的
+`schema_string(^^T)` 在编译期遍历上述 schema 树，并返回具有静态存储期的
 `std::string_view`。输出包含 record 字段 ID、转换后的存储类型、leaf 固定大小、容器
 元素布局和固定元素数量；无效 schema 会在编译期被拒绝。叶节点节点区分
 `primitive-leaf`、`codec-leaf` 和 `object-leaf`。进入叶节点模式的直接成员或基类使用
@@ -602,15 +704,15 @@ schema 不保存对象、转换结果或运行期 handler；这些状态仍由�
 实际标量的 wire 位置、对象内偏移及大小，与编解码和输入校验使用相同的布局元数据。
 
 ```cpp
-constexpr auto schema = srl::schema_string<Profile>();
+constexpr auto schema = srl::schema_string(^^Profile);
 std::println("{}", schema);
 ```
 
-类型模板参数会按 C++ 规则丢失 alias 身份。需要保留调用处的 alias 名时，直接传入类型反射：
+元数据查询统一接收 `std::meta::info`。直接传入 alias 的反射即可保留调用处的 alias 名：
 
 ```cpp
 using ProfileAlias = Profile;
-constexpr auto schema = srl::schema_string<^^ProfileAlias>();
+constexpr auto schema = srl::schema_string(^^ProfileAlias);
 ```
 
 输出样式如下：
@@ -641,3 +743,17 @@ object-leaf UniqueLeaf (size: 8 bytes, representation: direct) {
   [wire +4] second: unsigned int (size: 4, object +4)
 }
 ```
+
+## 字节缓冲存储
+
+`byte_buffer` 直接拥有 allocator 分配的字节存储，支持容量复用、复制及移动。
+`resize(n)` 初始化新增字节；`resize_uninitialized(n)` 不初始化新增区域，
+调用方必须先写入再读取。`read_block` 使用后者直接填充文件内容。
+
+`resize_and_overwrite(n, writer)` 向回调传入长度为 `n` 的可写 span，回调返回
+`std::size_t` 有效长度（不超过 `n`），并负责初始化有效前缀。回调不得通过其他
+别名修改缓冲。分配失败保留原值；回调抛出异常则长度清零、容量保留并传播异常。
+非传播 allocator 的缓冲交换要求两个 allocator 相等，与标准容器一致。
+
+当前 `serialize` 仍使用初始化扩容，编码失败后的既有契约保持不变；覆盖写入
+接口的接入与序列化错误处理调整留待后续完成。

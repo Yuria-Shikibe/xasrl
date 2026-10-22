@@ -4,10 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <iterator>
+#include <meta>
 #include <ranges>
 #include <span>
 #include <string>
-#include <type_traits>
 #include <utility>
 
 namespace srl {
@@ -17,7 +17,9 @@ namespace srl {
 
         template<typename T>
         consteval std::size_t range_fixed_size() {
-            if constexpr (statically_sized_range<T>) {
+            if constexpr (std::meta::is_bounded_array_type(^^T)) {
+                return std::meta::extent(^^T);
+            } else if constexpr (statically_sized_range<T>) {
                 using size_constant = decltype([](T &value) {
                     return std::cw<std::ranges::size(value)>;
                 }(std::declval<T &>()));
@@ -27,27 +29,24 @@ namespace srl {
             }
         }
 
-        template<typename T, typename = void>
-        struct default_container_traits_impl {
-            using element_type = std::ranges::range_value_t<T>;
-            static constexpr std::uint8_t mapping_group_size = 1;
-            static constexpr std::size_t fixed_size = range_fixed_size<T>();
-        };
-
-        template<typename T>
-        struct default_container_traits_impl<
-            T,
-            std::void_t<typename T::key_type, typename T::mapped_type>> {
-            using key_type = typename T::key_type;
-            using mapped_type = typename T::mapped_type;
-            using element_type = std::pair<key_type, mapped_type>;
-            static constexpr std::uint8_t mapping_group_size = 2;
-            static constexpr std::size_t fixed_size = range_fixed_size<T>();
-        };
     }
 
     template<typename T>
-    struct default_container_traits : detail::default_container_traits_impl<T> {};
+    struct default_container_traits {
+        using element_type = std::ranges::range_value_t<T>;
+        static constexpr std::uint8_t mapping_group_size = 1;
+        static constexpr std::size_t fixed_size = detail::range_fixed_size<T>();
+    };
+
+    template<typename T>
+        requires requires { typename T::key_type; typename T::mapped_type; }
+    struct default_container_traits<T> {
+        using key_type = typename T::key_type;
+        using mapped_type = typename T::mapped_type;
+        using element_type = std::pair<key_type, mapped_type>;
+        static constexpr std::uint8_t mapping_group_size = 2;
+        static constexpr std::size_t fixed_size = detail::range_fixed_size<T>();
+    };
 
     template<typename T, typename = void>
     struct container_traits {};
@@ -159,8 +158,8 @@ namespace srl {
             T &value,
             typename container_traits<T>::element_type element) {
             if constexpr (requires { container_traits<T>::insert(value, std::move(element)); }) {
-                if constexpr (std::is_void_v<decltype(
-                                  container_traits<T>::insert(value, std::move(element)))>) {
+                if constexpr (std::meta::is_void_type(^^decltype(
+                                  container_traits<T>::insert(value, std::move(element))))) {
                     container_traits<T>::insert(value, std::move(element));
                     return true;
                 } else {

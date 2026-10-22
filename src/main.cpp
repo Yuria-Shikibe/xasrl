@@ -31,7 +31,7 @@ int main() {
         .level = 26,
     };
 
-    std::println("schema \n {}", srl::schema_string<PlayerProfile>());
+    std::println("schema \n {}", srl::schema_string(^^PlayerProfile));
 
     srl::byte_buffer bytes{};
     const auto bytes_status = srl::serialize(source, bytes, context);

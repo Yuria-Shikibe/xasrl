@@ -1,21 +1,23 @@
 #pragma once
 
+#include <meta>
+
 #include <array>
 #include <concepts>
 #include <cstddef>
 #include <expected>
 #include <ranges>
 #include <span>
-#include <type_traits>
+#include <utility>
 
 #include "detail/codec.hpp"
 #include "transaction.hpp"
+#include "storage/byte_buffer.hpp"
 
 namespace srl {
     template<serializable T>
         requires (schema<T>::node(schema<T>::root).encode_extent != std::dynamic_extent)
     [[nodiscard]] consteval szt serialized_size() noexcept {
-        static_assert(schema_valid<T>(), schema_diagnostic<T>());
         return schema<T>::node(schema<T>::root).encode_extent;
     }
 
@@ -30,7 +32,6 @@ namespace srl {
         requires (schema<T>::node(schema<T>::root).encode_extent == std::dynamic_extent)
     [[nodiscard]] std::expected<szt, error> serialized_size(
         const T &value, const serialization_context &context) {
-        static_assert(schema_valid<T>(), schema_diagnostic<T>());
         typename detail::root_codec<T>::encode_plan plan;
         if (auto status = plan.prepare(value, context); status) {
             return std::unexpected{status};
@@ -46,7 +47,6 @@ namespace srl {
         const T &value,
         std::span<std::byte, Extent> destination,
         const serialization_context &context) {
-        static_assert(schema_valid<T>(), schema_diagnostic<T>());
         typename detail::root_codec<T>::encode_plan plan;
         if (auto status = plan.prepare(value, context); status) {
             return status;
@@ -62,7 +62,6 @@ namespace srl {
     template<serializable T>
     [[nodiscard]] error serialize(
         const T &value, byte_buffer &destination, const serialization_context &context) {
-        static_assert(schema_valid<T>(), schema_diagnostic<T>());
         typename detail::root_codec<T>::encode_plan plan;
         if (auto status = plan.prepare(value, context); status) {
             return status;
@@ -75,14 +74,13 @@ namespace srl {
     }
 
     template<serializable T, typename Byte, std::size_t Extent>
-        requires (std::same_as<Byte, std::byte> || std::same_as<Byte, const std::byte>)
-                 && (!std::is_const_v<T> && !std::is_volatile_v<T>)
+        requires (std::meta::is_same_type(^^Byte, ^^std::byte) || std::meta::is_same_type(^^Byte, ^^const std::byte))
+                 && (!std::meta::is_const_type(^^T) && !std::meta::is_volatile_type(^^T))
                  && transactional<codec_value_type<T>>
     [[nodiscard]] error deserialize(
         std::span<Byte, Extent> bytes,
         T &out,
         const serialization_context &context) {
-        static_assert(schema_valid<T>(), schema_diagnostic<T>());
         if (bytes.size() > context.config.limits.max_input_bytes) {
             return detail::fail(error_code::resource_limit_exceeded);
         }
@@ -99,14 +97,13 @@ namespace srl {
 
     template<typename T, std::size_t Size, typename Byte, std::size_t Extent>
         requires serializable<T[Size]>
-                 && (std::same_as<Byte, std::byte> || std::same_as<Byte, const std::byte>)
-                 && (!std::is_const_v<T> && !std::is_volatile_v<T>)
+                 && (std::meta::is_same_type(^^Byte, ^^std::byte) || std::meta::is_same_type(^^Byte, ^^const std::byte))
+                 && (!std::meta::is_const_type(^^T) && !std::meta::is_volatile_type(^^T))
                  && transactional<T>
     [[nodiscard]] error deserialize(
         std::span<Byte, Extent> bytes,
         T (&out)[Size],
         const serialization_context &context) {
-        static_assert(schema_valid<T[Size]>(), schema_diagnostic<T[Size]>());
         if (bytes.size() > context.config.limits.max_input_bytes) {
             return detail::fail(error_code::resource_limit_exceeded);
         }

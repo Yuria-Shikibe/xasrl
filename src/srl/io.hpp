@@ -120,7 +120,7 @@ namespace srl {
             return std::unexpected{detail::fail(error_code::unsupported_compression)};
         }
 
-        entry_bytes.resize(static_cast<std::size_t>(entry_size));
+        entry_bytes.resize_uninitialized(static_cast<std::size_t>(entry_size));
         if (auto status = detail::read_bytes(input, entry_bytes.span()); status) { return std::unexpected{status}; }
         if (auto entry = detail::parse_entry(entry_bytes.span()); !entry) {
             return std::unexpected{entry.error()};

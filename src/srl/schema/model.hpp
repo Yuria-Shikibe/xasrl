@@ -5,9 +5,10 @@
 #include <meta>
 #include <span>
 
-#include "../context.hpp"
-#include "../wire.hpp"
-#include "../detail/object_layout.hpp"
+#include "diagnostic.hpp"
+#include "../conversion.hpp"
+#include "../types.hpp"
+#include "../detail/object_layout_model.hpp"
 
 namespace srl {
     enum class schema_kind : std::uint8_t { root, leaf, record, stream, container };
@@ -18,17 +19,6 @@ namespace srl {
 
     enum class schema_duplicates : std::uint8_t { inherit, deduplicate, reject };
 
-    enum class schema_error : std::uint8_t {
-        none, invalid_schema, unsupported_type, conflicting_annotations, duplicate_field_id,
-        field_id_overflow, recursive_type, invalid_conversion, invalid_object_representation,
-        extent_overflow, mapping_limit, missing_default_constructor, unsupported_entity,
-    };
-
-    struct schema_issue {
-        schema_error reason{};
-        std::meta::info entity{};
-    };
-
     struct schema_node {
         schema_kind kind = schema_kind::root;
         schema_role role = schema_role::value;
@@ -37,7 +27,6 @@ namespace srl {
         std::meta::info entity{};
         id_type id{};
         bool has_field_id{};
-        type_hash_type type_hash{};
         type_hash_type wire_type{};
         std::size_t children_begin{};
         std::size_t children_count{};
@@ -59,11 +48,9 @@ namespace srl {
     };
 
     struct schema_tree {
-        bool valid{};
         std::span<const schema_node> nodes;
         std::span<const std::size_t> child_indices;
         std::size_t root{};
-        schema_issue issue{};
 
         [[nodiscard]] consteval const schema_node &node(std::size_t index) const noexcept {
             return nodes[index];

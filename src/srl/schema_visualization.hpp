@@ -151,16 +151,7 @@ namespace srl::detail {
 }
 
 namespace srl {
-    template<std::meta::info Type>
-        requires (std::meta::is_type(Type))
-    [[nodiscard]] consteval std::string_view schema_string() {
-        using T = typename[:Type:];
-        static_assert(schema<T>::valid, "cannot visualize an invalid serialization schema");
-        return detail::make_schema_string(schema<T>::tree, Type);
-    }
-
-    template<typename T>
-    [[nodiscard]] consteval std::string_view schema_string() {
-        return schema_string<^^T>();
+    [[nodiscard]] consteval std::string_view schema_string(std::meta::info type) {
+        return detail::make_schema_string(detail::build_schema(type), type);
     }
 }

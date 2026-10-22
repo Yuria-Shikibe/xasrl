@@ -27,7 +27,7 @@ namespace {
         constexpr auto &schema = srl::schema<T>::tree;
         constexpr auto node = schema.child(schema.root, 0);
         constexpr auto layout = schema.node(node).object;
-        static_assert(layout.valid && !layout.fields().empty());
+        static_assert(!layout.fields().empty());
         srl::serialization_context context;
         srl::byte_buffer bytes;
         ASSERT_FALSE(srl::serialize(T{}, bytes, context));

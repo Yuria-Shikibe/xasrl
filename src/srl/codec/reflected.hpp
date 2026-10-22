@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstring>
 #include <meta>
@@ -23,33 +22,18 @@ namespace srl {
     }
 
     template<typename T>
-        requires (detail::auto_leaf_supported<T>())
+        requires (detail::auto_leaf_supported(^^T))
     struct leaf_codec<T> {
         static constexpr bool uses_direct_object_representation =
-            detail::leaf_uses_direct_object_representation_impl<T>();
+            detail::leaf_uses_direct_object_representation_impl(^^T);
         static constexpr bool uses_segmented_object_representation =
-            detail::leaf_uses_segmented_object_representation_impl<T>();
-        static constexpr auto layout = detail::make_object_layout<T, uses_segmented_object_representation>();
+            detail::leaf_uses_segmented_object_representation_impl(^^T);
+        static constexpr detail::object_layout layout = detail::make_object_layout(^^T, uses_segmented_object_representation);
 
-        static constexpr auto copy_ranges = [] consteval {
-            if constexpr (uses_segmented_object_representation) {
-                return detail::leaf_copy_ranges<T>();
-            } else {
-                return std::array<detail::byte_range, 0>{};
-            }
-        }();
-
-        static constexpr szt fixed_size = [] consteval -> szt {
-            if constexpr (uses_direct_object_representation) {
-                return sizeof(T);
-            } else {
-                szt result{};
-                for (const auto range: copy_ranges) {
-                    result += range.size;
-                }
-                return result;
-            }
-        }();
+        static constexpr auto copy_ranges = uses_segmented_object_representation
+            ? detail::leaf_copy_ranges(^^T) : std::span<const detail::byte_range>{};
+        static constexpr szt fixed_size = uses_direct_object_representation
+            ? sizeof(T) : detail::byte_ranges_size(copy_ranges);
 
         [[nodiscard]] static error encode(
             const T &value,

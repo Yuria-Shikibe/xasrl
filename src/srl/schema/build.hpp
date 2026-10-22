@@ -6,7 +6,8 @@
 #include <meta>
 #include <optional>
 #include <span>
-#include <type_traits>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -16,63 +17,16 @@
 #include "../container.hpp"
 
 namespace srl::detail {
-    consteval std::size_t annotation_count(std::meta::info entity, std::meta::info annotation) {
-        entity = recursively_dealias(entity);
-        return std::meta::annotations_of_with_type(entity, annotation).size();
-    }
-
-    consteval std::vector<std::meta::info> schema_entities(std::meta::info type) {
-        auto result = std::meta::bases_of(type, std::meta::access_context::unchecked());
-        for (auto member: std::meta::nonstatic_data_members_of(type, std::meta::access_context::unchecked())) {
-            result.push_back(member);
-        }
-        return result;
-    }
-
-    consteval bool schema_has_fields(std::meta::info type) {
-        type = recursively_dealias(type);
-        if (!std::meta::is_class_type(type)) {
-            return false;
-        }
-        if (annotation_count(type, ^^tag::auto_seq) != 0) {
-            return true;
-        }
-        for (auto entity: schema_entities(type)) {
-            if (annotation_count(entity, ^^tag::field) != 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    consteval bool schema_contains_pointer(std::meta::info type) {
-        if (std::meta::is_reference_type(type) || std::meta::is_pointer_type(type)
-            || std::meta::is_member_pointer_type(type)) {
-            return true;
-        }
-        type = std::meta::remove_cv(type);
-        if (std::meta::is_array_type(type)) {
-            return schema_contains_pointer(std::meta::remove_extent(type));
-        }
-        if (std::meta::is_class_type(type) || std::meta::is_union_type(type)) {
-            for (auto entity: schema_entities(type)) {
-                if (schema_contains_pointer(std::meta::type_of(entity))) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
     consteval bool schema_forced_leaf(std::meta::info owner, std::meta::info entity) {
-        const auto declared = std::meta::type_of(entity);
+        const entity_facts facts{entity};
+        const auto declared = facts.declared;
         const auto type = std::meta::remove_cvref(declared);
         const bool bypass = annotation_count(owner, ^^tag::bypass_pointer_check) == 1
-                            || annotation_count(entity, ^^tag::bypass_pointer_check) == 1;
+                            || facts.bypass == 1;
         const auto leaves = std::meta::annotations_of_with_type(entity, ^^tag::leaf);
-        if (std::meta::is_reference_type(declared) || std::meta::is_bit_field(entity)
-            || annotation_count(entity, ^^conversion_tag) != 0
-            || annotation_count(entity, ^^tag::container) != 0
+        if (std::meta::is_reference_type(declared) || facts.unsupported
+            || facts.conversions != 0
+            || facts.containers != 0
             || (leaves.size() != 1 && !(bypass && schema_contains_pointer(type)))) {
             return false;
         }
@@ -90,11 +44,10 @@ namespace srl::detail {
         szt extent = std::dynamic_extent;
         std::size_t count = std::dynamic_extent;
         std::uint8_t group{};
-        //TODO support by vector?
         std::meta::info first{};
         std::meta::info second{};
         leaf_representation representation = leaf_representation::codec;
-        const object_layout *object{};
+        bool has_object_layout{};
     };
 
     template<typename T>
@@ -104,7 +57,7 @@ namespace srl::detail {
             result.leaf = true;
             result.extent = leaf_codec<T>::fixed_size;
             if constexpr (requires { leaf_codec<T>::layout; }) {
-                result.object = &leaf_codec<T>::layout;
+                result.has_object_layout = true;
             }
             if constexpr (requires { leaf_codec<T>::uses_direct_object_representation; }) {
                 if (leaf_codec<T>::uses_direct_object_representation) {
@@ -137,15 +90,16 @@ namespace srl::detail {
     }
 
     template<typename T>
-    inline constexpr object_layout forced_object_layout_value = make_object_layout<T>();
+    inline constexpr const object_layout *codec_object_layout = &leaf_codec<T>::layout;
 
-    template<typename T>
-    inline constexpr const object_layout *forced_object_layout = &forced_object_layout_value<T>;
-
-    template<typename Memory, typename Storage>
-    inline constexpr bool schema_conversion_valid_v =
-        std::default_initializable<Storage> && std::move_constructible<Storage>
-        && std::is_move_assignable_v<Memory>;
+    consteval bool schema_conversion_valid(std::meta::info memory, std::meta::info storage) {
+        const auto rvalue = std::meta::add_rvalue_reference(storage);
+        return std::meta::extract<bool>(std::meta::substitute(^^std::default_initializable, {storage}))
+            && std::meta::is_nothrow_destructible_type(storage)
+            && std::meta::is_constructible_type(storage, {rvalue})
+            && std::meta::is_convertible_type(rvalue, storage)
+            && std::meta::is_move_assignable_type(memory);
+    }
 
     template<typename Memory, typename Storage>
     inline constexpr bool schema_cast_valid_v = requires(const Memory &mem, Storage &&storage, Memory &out) {
@@ -158,17 +112,14 @@ namespace srl::detail {
     }
 
     struct schema_builder {
-        bool valid = true;
         std::vector<schema_node> nodes;
         std::vector<std::size_t> edges;
         std::vector<std::meta::info> ancestors;
-        schema_issue issue{};
+        std::vector<std::meta::info> path;
 
-        consteval void reject(schema_error reason, std::meta::info entity = {}) {
-            valid = false;
-            if (issue.reason == schema_error::none) {
-                issue = {reason, entity};
-            }
+        [[noreturn]] consteval void reject(schema_error reason, std::meta::info entity = {},
+                                           std::string_view detail = {}) {
+            reject_schema(reason, path, entity, detail);
         }
 
         consteval szt add_size(szt left, szt right) {
@@ -177,8 +128,7 @@ namespace srl::detail {
             }
             constexpr auto maximum = maximum_entry_size;
             if (left > maximum || right > maximum - left) {
-                reject(schema_error::extent_overflow);
-                return std::dynamic_extent;
+                reject(schema_error::extent_overflow, {}, "serialized extent exceeds maximum_entry_size");
             }
             return left + right;
         }
@@ -191,63 +141,39 @@ namespace srl::detail {
                 return std::dynamic_extent;
             }
             if (count > maximum_entry_size / size) {
-                reject(schema_error::extent_overflow);
-                return std::dynamic_extent;
+                reject(schema_error::extent_overflow, {}, "serialized extent exceeds maximum_entry_size");
             }
             return count * size;
         }
 
-        consteval bool leaf_metadata_valid(std::meta::info type) {
-            if (annotation_count(type, ^^tag::auto_seq) != 0
-                || annotation_count(type, ^^tag::auto_stream) != 0
-                || annotation_count(type, ^^tag::bypass_pointer_check) > 1) {
-                return false;
-            }
-            for (auto entity: schema_entities(type)) {
-                const auto transient = annotation_count(entity, ^^tag::transient);
-                const auto bypass = annotation_count(entity, ^^tag::bypass_pointer_check);
-                if (annotation_count(entity, ^^tag::auto_stream) != 0 || transient > 1 || bypass > 1
-                    || annotation_count(entity, ^^tag::field) != 0
-                    || annotation_count(entity, ^^tag::leaf) != 0
-                    || annotation_count(entity, ^^tag::container) != 0
-                    || fallback_annotation_count(entity) != 0
-                    || annotation_count(entity, ^^conversion_tag) != 0) {
-                    return false;
-                }
-                if (transient == 1) {
-                    if (std::meta::is_base(entity) || bypass != 0) {
-                        return false;
-                    }
-                    continue;
-                }
-                if ((std::meta::is_base(entity) && std::meta::is_virtual(entity))
-                    || std::meta::is_bit_field(entity)
-                    || std::meta::is_reference_type(std::meta::type_of(entity))
-                    || (schema_contains_pointer(std::meta::type_of(entity))
-                        && annotation_count(type, ^^tag::bypass_pointer_check) == 0 && bypass == 0)) {
-                    return false;
-                }
-            }
-            return true;
+        consteval std::size_t append(schema_node node, bool stream = false) {
+            path.push_back(node.entity != std::meta::info{} ? node.entity : node.type);
+            if (node.converted()) { path.push_back(node.type); }
+            const auto index = append_value(node, stream);
+            if (node.converted()) { path.pop_back(); }
+            path.pop_back();
+            return index;
         }
 
-        consteval std::size_t append(schema_node node, bool stream = false) {
+        consteval std::size_t append_value(schema_node node, bool stream) {
             const auto index = nodes.size();
             nodes.push_back(node);
             const auto type = node.type;
+            if (auto issue = enum_metadata_issue(type); issue.reason != schema_error::none) {
+                reject(issue.reason, type, issue.detail);
+            }
             if (node.representation == leaf_representation::forced) {
+                std::vector<object_field> fields;
+                collect_object_fields(type, {}, 0, fields, path);
                 node.kind = schema_kind::leaf;
                 node.encode_extent = node.decode_extent = std::meta::size_of(type);
-                node.object = *std::meta::extract<const object_layout *>(
-                    std::meta::substitute(^^forced_object_layout, {type}));
-                if (!node.object.valid) { reject(schema_error::invalid_object_representation, type); }
+                node.object = make_object_layout(type);
                 node.wire_type = leaf_wire_type(node);
                 nodes[index] = node;
                 return index;
             }
             if (std::ranges::find(ancestors, type) != ancestors.end()) {
                 reject(schema_error::recursive_type, type);
-                return index;
             }
             const auto seq_count = annotation_count(type, ^^tag::auto_seq);
             const auto stream_count = annotation_count(type, ^^tag::auto_stream);
@@ -258,21 +184,23 @@ namespace srl::detail {
                 || (stream && (!std::meta::is_class_type(type) || facts.leaf || facts.container || leaf_count != 0))
                 || leaf_count > 1) {
                 reject(schema_error::conflicting_annotations, type);
-                return index;
             }
-            node.type_hash = srl::type_hash(type);
-            if (leaf_count != 0 && (!facts.leaf || !leaf_metadata_valid(type))) {
-                reject(schema_error::invalid_object_representation, type);
-                return index;
+            if (leaf_count != 0 && (!facts.leaf || leaf_metadata_issue(type) != std::meta::info{})) {
+                const auto entity = leaf_metadata_issue(type);
+                reject(schema_error::invalid_object_representation, entity == std::meta::info{} ? type : entity);
             }
             if (facts.leaf) {
                 node.kind = schema_kind::leaf;
                 node.encode_extent = node.decode_extent = facts.extent;
                 node.representation = facts.representation;
-                if (facts.object != nullptr) {
-                    node.object = *facts.object;
+                if (facts.has_object_layout) {
+                    // Validate here before entering the codec's separate constant initializer,
+                    // so inspection can catch failures with the enclosing schema path.
+                    std::vector<object_field> fields;
+                    collect_object_fields(type, {}, 0, fields, path);
+                    node.object = *std::meta::extract<const object_layout *>(
+                        std::meta::substitute(^^codec_object_layout, {type}));
                 }
-                if (!node.object.valid) { reject(schema_error::invalid_object_representation, type); }
                 if (facts.extent > maximum_entry_size) {
                     reject(schema_error::extent_overflow, type);
                 }
@@ -324,7 +252,7 @@ namespace srl::detail {
                 node.wire_kind = stream ? entry_kind::stream : entry_kind::record;
                 node.mapping_group_size = stream ? 0 : 1;
                 std::uint64_t next_id{};
-                for (auto entity: schema_entities(type)) {
+                for (auto entity: reflected_entities(type)) {
                     auto child = field(type, entity, stream, seq_count == 1, next_id);
                     if (child) {
                         children.push_back(append(*child, annotation_count(entity, ^^tag::auto_stream) == 1));
@@ -337,7 +265,10 @@ namespace srl::detail {
                     std::ranges::sort(children, [&](auto left, auto right) { return nodes[left].id < nodes[right].id; });
                     for (std::size_t i = 1; i < children.size(); ++i) {
                         if (nodes[children[i - 1]].id == nodes[children[i]].id) {
-                            reject(schema_error::duplicate_field_id, nodes[children[i]].entity);
+                            reject(schema_error::duplicate_field_id, nodes[children[i]].entity,
+                                std::string("field id=") + diagnostic_integer(nodes[children[i]].id)
+                                + " also used by " + std::string(std::meta::display_string_of(nodes[children[i - 1]].entity))
+                                + "; assign distinct field IDs");
                         }
                     }
                 }
@@ -370,29 +301,29 @@ namespace srl::detail {
         consteval std::optional<schema_node> field(std::meta::info owner, std::meta::info entity,
                                                    bool stream, bool sequence, std::uint64_t &next_id) {
             const auto fields = std::meta::annotations_of_with_type(entity, ^^tag::field);
-            const auto leaves = annotation_count(entity, ^^tag::leaf);
+            const entity_facts facts{entity};
+            const auto leaves = facts.leaves;
             const auto containers = std::meta::annotations_of_with_type(entity, ^^tag::container);
             const auto conversions = std::meta::annotations_of_with_type(entity, ^^conversion_tag);
-            const auto transient = annotation_count(entity, ^^tag::transient);
-            const auto bypass = annotation_count(entity, ^^tag::bypass_pointer_check);
-            const auto streams = annotation_count(entity, ^^tag::auto_stream);
-            const auto fallbacks = fallback_annotation_count(entity);
+            const auto transient = facts.transient;
+            const auto bypass = facts.bypass;
+            const auto streams = facts.streams;
+            const auto fallbacks = facts.fallbacks;
             const bool automatic = stream || sequence;
-            const bool serialized = automatic || fields.size() == 1;
-            const bool base = std::meta::is_base(entity);
-            const auto declared = std::meta::type_of(entity);
+            const bool serialized = automatic || facts.fields == 1;
+            const bool base = facts.base;
+            const auto declared = facts.declared;
             const auto memory = std::meta::remove_cvref(declared);
             if (fallbacks > 1 || (fallbacks != 0 && (stream || !serialized || transient != 0))
                 || (fallbacks == 1 && !fallback_valid(entity))
                 || streams > 1 || (streams == 1 && (!serialized || transient != 0 || leaves != 0 || !containers.empty() || bypass != 0))
                 || transient > 1 || (transient == 1 && (!automatic || (!stream && !fields.empty()) || leaves != 0
                     || !containers.empty() || bypass != 0 || !conversions.empty()))
-                || (!stream && fields.size() > 1) || leaves > 1 || bypass > 1 || conversions.size() > 1
-                || (conversions.size() == 1 && (!serialized || leaves != 0 || bypass != 0 || base))
-                || containers.size() > 1 || (containers.size() == 1 && (!serialized || bypass != 0))
+                || (!stream && facts.fields > 1) || leaves > 1 || bypass > 1 || facts.conversions > 1
+                || (facts.conversions == 1 && (!serialized || leaves != 0 || bypass != 0 || base))
+                || facts.containers > 1 || (facts.containers == 1 && (!serialized || bypass != 0))
                 || (bypass == 1 && !automatic && leaves == 0)) {
                 reject(schema_error::conflicting_annotations, entity);
-                return std::nullopt;
             }
             if (transient == 1) {
                 return std::nullopt;
@@ -400,7 +331,6 @@ namespace srl::detail {
             const bool forced = schema_forced_leaf(owner, entity);
             if (leaves == 1 && (!serialized || !containers.empty() || !forced)) {
                 reject(schema_error::invalid_object_representation, entity);
-                return std::nullopt;
             }
             if (!serialized) {
                 return std::nullopt;
@@ -414,45 +344,39 @@ namespace srl::detail {
             }
             if (!stream) {
                 node.has_field_id = true;
-                if (fields.size() == 1) {
+                if (facts.fields == 1) {
                     next_id = std::meta::extract<tag::field>(fields.front()).id;
                 }
                 if (next_id > std::numeric_limits<id_type>::max()) {
                     reject(schema_error::field_id_overflow, entity);
-                    return std::nullopt;
                 }
                 node.id = static_cast<id_type>(next_id++);
             }
-            if (std::meta::is_bit_field(entity) || (base && std::meta::is_virtual(entity))) {
+            if (facts.unsupported) {
                 reject(schema_error::unsupported_entity, entity);
-                return std::nullopt;
             }
-            if (conversions.size() == 1) {
+            if (facts.conversions == 1) {
                 node.conversion = std::meta::extract<conversion_tag>(conversions.front());
                 const auto storage = node.conversion.target_type;
                 if (!std::meta::is_type(storage) || std::meta::is_reference_type(declared)
                     || std::meta::is_const_type(declared) || std::meta::is_volatile_type(declared)
                     || !std::meta::is_same_type(storage, std::meta::remove_cvref(storage))) {
                     reject(schema_error::invalid_conversion, entity);
-                    return std::nullopt;
                 }
-                if (!std::meta::extract<bool>(std::meta::substitute(^^schema_conversion_valid_v, {memory, storage}))
+                if (!schema_conversion_valid(memory, storage)
                     || (node.conversion.handler_id == nullptr
                         && !std::meta::extract<bool>(std::meta::substitute(^^schema_cast_valid_v, {memory, storage})))) {
                     reject(schema_error::invalid_conversion, entity);
-                    return std::nullopt;
                 }
                 node.type = storage;
             } else if (forced) {
                 node.representation = leaf_representation::forced;
             } else if (std::meta::is_reference_type(declared) || std::meta::is_pointer_type(memory)) {
                 reject(schema_error::unsupported_entity, entity);
-                return std::nullopt;
             }
             if (!containers.empty()) {
                 if (!schema_facts(node.type).container) {
                     reject(schema_error::conflicting_annotations, entity);
-                    return std::nullopt;
                 }
                 node.duplicates = std::meta::extract<tag::container>(containers.front()).duplicates == duplicate_policy::reject
                     ? schema_duplicates::reject : schema_duplicates::deduplicate;
@@ -472,11 +396,11 @@ namespace srl::detail {
         root.children_count = 1;
         root.wire_kind = value.wire_kind;
         root.mapping_group_size = value.mapping_group_size;
-        root.type_hash = value.type_hash;
         root.wire_type = value.wire_type;
         root.header_size = value.kind == schema_kind::leaf ? entry_head_wire_size : 0;
+        builder.path.push_back(type);
         root.encode_extent = builder.add_size(root.header_size, value.encode_extent);
         builder.edges.push_back(payload);
-        return {builder.valid, std::define_static_array(builder.nodes), std::define_static_array(builder.edges), 0, builder.issue};
+        return {std::define_static_array(builder.nodes), std::define_static_array(builder.edges), 0};
     }
 }

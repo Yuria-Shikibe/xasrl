@@ -48,11 +48,11 @@ namespace {
     struct [[=srl::tag::auto_seq{}]] invalid_transient {
         [[=srl::tag::transient{}, =srl::tag::fallback{}]] int value;
     };
-    static_assert(srl::schema_valid<target>());
-    static_assert(!srl::schema_valid<duplicate>());
-    static_assert(!srl::schema_valid<invalid_provider>());
-    static_assert(!srl::schema_valid<invalid_stream>());
-    static_assert(!srl::schema_valid<invalid_transient>());
+    static_assert(srl::schema_valid(^^target));
+    static_assert(!srl::schema_valid(^^duplicate));
+    static_assert(!srl::schema_valid(^^invalid_provider));
+    static_assert(!srl::schema_valid(^^invalid_stream));
+    static_assert(!srl::schema_valid(^^invalid_transient));
 
     TEST(Fallback, MissingFieldsAndPresentValues) {
         srl::serialization_context context;

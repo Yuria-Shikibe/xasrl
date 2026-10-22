@@ -1,5 +1,7 @@
 #pragma once
 
+#include <charconv>
+#include <iterator>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
@@ -12,7 +14,6 @@
 #include <ranges>
 #include <span>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -103,7 +104,7 @@ namespace srl::detail {
             static constexpr auto diagnostic_id = field_codec::diagnostic_id;
             static constexpr auto wire_type = descriptor.wire_type;
             static constexpr auto static_extent = field_codec::static_extent;
-            [[no_unique_address]] std::conditional_t<descriptor.converted(), std::optional<storage_type>, no_conversion> storage;
+            [[no_unique_address]] typename[:descriptor.converted() ? ^^std::optional<storage_type> : ^^no_conversion:] storage;
             [[no_unique_address]] typename value_codec<Tree, Node>::encode_plan payload;
 
             template<typename T>
@@ -177,13 +178,10 @@ namespace srl::detail {
         for (auto child: tree.children(node)) {
             const auto type = std::meta::substitute(plan_template,
                 {tree_reference, std::meta::reflect_constant(child)});
-            //TODO use to_chars, and use static size buffer according to numeric limits
+            char digits[std::numeric_limits<std::size_t>::digits10 + 1];
+            const auto result = std::to_chars(std::begin(digits), std::end(digits), members.size());
             std::string name = "field_";
-            auto ordinal = members.size();
-            do {
-                name.push_back(static_cast<char>('0' + ordinal % 10));
-                ordinal /= 10;
-            } while (ordinal != 0);
+            name.append(digits, result.ptr);
             members.push_back(std::meta::data_member_spec(type, {.name = name, .no_unique_address = true}));
         }
         return std::meta::define_aggregate(target, members);
@@ -262,10 +260,10 @@ namespace srl::detail {
             const entry_view &entry, value_type &out,
             const serialization_context &context, decode_budget &budget) {
             constexpr auto wire_kind = descriptor.wire_kind;
-            if (entry.head.kind() != wire_kind) {
+            if (entry.head().kind() != wire_kind) {
                 return fail(error_code::entry_kind_mismatch, std::nullopt, 11);
             }
-            if (entry.head.wire_type != descriptor.wire_type) {
+            if (entry.head().wire_type != descriptor.wire_type) {
                 return fail(error_code::type_mismatch, std::nullopt, 12);
             }
             szt cursor{};
@@ -278,8 +276,8 @@ namespace srl::detail {
                     if constexpr (!stream) {
                         return entry.find(field_id);
                     } else {
-                        const auto remaining = entry.content.subspan(cursor);
-                        const auto offset = entry.content_offset + cursor;
+                        const auto remaining = entry.content().subspan(cursor);
+                        const auto offset = entry.content_offset() + cursor;
                         szt size{};
                         if constexpr (field_extent != std::dynamic_extent) {
                             size = field_extent;
@@ -318,8 +316,8 @@ namespace srl::detail {
                 }
             }
             if constexpr (stream) {
-                if (cursor != entry.content.size()) {
-                    return fail(error_code::trailing_bytes, std::nullopt, entry.content_offset + cursor);
+                if (cursor != entry.content().size()) {
+                    return fail(error_code::trailing_bytes, std::nullopt, entry.content_offset() + cursor);
                 }
             }
             return {};
@@ -328,7 +326,7 @@ namespace srl::detail {
 
     template<std::size_t Slot, typename Expected, typename Value, typename Visitor>
     void visit_container_slot(Value &&value, Visitor &&visitor) {
-        if constexpr (std::same_as<std::remove_cvref_t<Value>, Expected>) {
+        if constexpr (std::meta::is_same_type(std::meta::remove_cvref(^^Value), ^^Expected)) {
             visitor.template operator()<Slot>(value);
         } else {
             Expected converted(std::forward<Value>(value));
@@ -461,7 +459,6 @@ namespace srl::detail {
             error encode(std::span<std::byte, static_extent> destination, const value_type &value) const {
                 constexpr auto group_size = descriptor.mapping_group_size;
                 constexpr auto wire_kind = descriptor.wire_kind;
-                detail::
                 write_trivial(destination, entry_head{
                     .size = size,
                     .metadata = {slot_count, wire_kind},
@@ -508,14 +505,14 @@ namespace srl::detail {
             constexpr auto group_size = descriptor.mapping_group_size;
             constexpr auto fixed_count = descriptor.element_count;
             constexpr auto duplicate_mode = descriptor.duplicates;
-            if (entry.head.kind() != descriptor.wire_kind) {
+            if (entry.head().kind() != descriptor.wire_kind) {
                 return fail(error_code::entry_kind_mismatch, std::nullopt, 11);
             }
-            if (entry.head.wire_type != descriptor.wire_type) {
+            if (entry.head().wire_type != descriptor.wire_type) {
                 return fail(error_code::type_mismatch, std::nullopt, 12);
             }
 
-            const auto element_count = entry.head.mapping_count() / group_size;
+            const auto element_count = entry.head().mapping_count() / group_size;
             if (!budget.consume(element_count, sizeof(typename traits::element_type))) {
                 return fail(error_code::resource_limit_exceeded, std::nullopt, 8);
             }
@@ -645,13 +642,13 @@ namespace srl::detail {
             const entry_view &entry, T &out, const serialization_context &context, decode_budget &budget) {
             constexpr auto type_hash_value = tree.node(node).wire_type;
             if constexpr (tree.node(node).kind == schema_kind::leaf) {
-                if (entry.head.kind() != entry_kind::leaf) {
+                if (entry.head().kind() != entry_kind::leaf) {
                     return detail::fail(error_code::entry_kind_mismatch, std::nullopt, 11);
                 }
-                if (entry.head.wire_type != type_hash_value) {
+                if (entry.head().wire_type != type_hash_value) {
                     return detail::fail(error_code::type_mismatch, std::nullopt, 12);
                 }
-                return value_codec<tree, node>::decode(entry.content, out, context, budget, std::nullopt, entry_head_wire_size);
+                return value_codec<tree, node>::decode(entry.content(), out, context, budget, std::nullopt, entry_head_wire_size);
             } else {
                 return value_codec<tree, node>::decode_entry(entry, out, context, budget);
             }

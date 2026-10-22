@@ -1,0 +1,219 @@
+#pragma once
+
+#include <algorithm>
+#include <cstddef>
+#include <meta>
+#include <span>
+#include <vector>
+
+#include "../annotations.hpp"
+
+namespace srl {
+    consteval std::meta::info recursively_dealias(std::meta::info info) {
+        if (std::meta::is_type_alias(info)) {
+            return recursively_dealias(std::meta::dealias(info));
+        }
+        return info;
+    }
+
+}
+
+namespace srl::detail {
+    consteval std::size_t annotation_count(std::meta::info entity, std::meta::info annotation) {
+        entity = recursively_dealias(entity);
+        return std::meta::annotations_of_with_type(entity, annotation).size();
+    }
+
+    consteval std::vector<std::meta::info> reflected_entities(std::meta::info type) {
+        auto result = std::meta::bases_of(type, std::meta::access_context::unchecked());
+        for (auto member: std::meta::nonstatic_data_members_of(type, std::meta::access_context::unchecked())) {
+            result.push_back(member);
+        }
+        return result;
+    }
+
+    consteval bool schema_has_fields(std::meta::info type) {
+        type = recursively_dealias(type);
+        if (!std::meta::is_class_type(type)) {
+            return false;
+        }
+        if (annotation_count(type, ^^tag::auto_seq) != 0) {
+            return true;
+        }
+        for (auto entity: reflected_entities(type)) {
+            if (annotation_count(entity, ^^tag::field) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    consteval bool schema_contains_pointer(std::meta::info type) {
+        if (std::meta::is_reference_type(type) || std::meta::is_pointer_type(type)
+            || std::meta::is_member_pointer_type(type)) {
+            return true;
+        }
+        type = std::meta::remove_cv(type);
+        if (std::meta::is_array_type(type)) {
+            return schema_contains_pointer(std::meta::remove_extent(type));
+        }
+        if (std::meta::is_class_type(type) || std::meta::is_union_type(type)) {
+            for (auto entity: reflected_entities(type)) {
+                if (schema_contains_pointer(std::meta::type_of(entity))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+
+    struct entity_facts {
+        std::meta::info declared;
+        bool base;
+        bool unsupported;
+        std::size_t fields, leaves, containers, conversions, transient, bypass, streams, fallbacks;
+
+        consteval explicit entity_facts(std::meta::info entity)
+            : declared(std::meta::type_of(entity)), base(std::meta::is_base(entity)),
+              unsupported(std::meta::is_bit_field(entity)
+                  || (base && std::meta::is_virtual(entity))),
+              fields(annotation_count(entity, ^^tag::field)),
+              leaves(annotation_count(entity, ^^tag::leaf)),
+              containers(annotation_count(entity, ^^tag::container)),
+              conversions(annotation_count(entity, ^^conversion_tag)),
+              transient(annotation_count(entity, ^^tag::transient)),
+              bypass(annotation_count(entity, ^^tag::bypass_pointer_check)),
+              streams(annotation_count(entity, ^^tag::auto_stream)),
+              fallbacks(fallback_annotation_count(entity)) {}
+    };
+
+    // Shared by automatic leaf eligibility and schema validation, including
+    // explicitly specialized leaf codecs. Returns the offending entity.
+    consteval std::meta::info leaf_metadata_issue(std::meta::info type) {
+        if (annotation_count(type, ^^tag::auto_seq) != 0
+            || annotation_count(type, ^^tag::auto_stream) != 0
+            || annotation_count(type, ^^tag::bypass_pointer_check) > 1) {
+            return type;
+        }
+        for (auto entity: reflected_entities(type)) {
+            const entity_facts facts{entity};
+            if (facts.streams != 0 || facts.transient > 1 || facts.bypass > 1
+                || facts.fields != 0 || facts.leaves != 0 || facts.containers != 0
+                || facts.fallbacks != 0 || facts.conversions != 0) {
+                return entity;
+            }
+            if (facts.transient == 1) {
+                if (facts.base || facts.bypass != 0) { return entity; }
+                continue;
+            }
+            if (facts.unsupported || std::meta::is_reference_type(facts.declared)
+                || (schema_contains_pointer(facts.declared)
+                    && annotation_count(type, ^^tag::bypass_pointer_check) == 0 && facts.bypass == 0)) {
+                return entity;
+            }
+        }
+        return {};
+    }
+
+    struct byte_range {
+        std::size_t offset{};
+        std::size_t size{};
+    };
+
+    consteval bool has_transient_members(std::meta::info type) {
+        for (auto entity: reflected_entities(type)) {
+            if (!std::meta::is_base(entity) && annotation_count(entity, ^^tag::transient) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    consteval bool transient_layout_supports_segmented_copy(std::meta::info type) {
+        const auto entities = reflected_entities(type);
+        std::vector<byte_range> transient_ranges;
+        for (auto entity: entities) {
+            if (annotation_count(entity, ^^tag::transient) == 1) {
+                if (std::meta::is_base(entity) || std::meta::is_bit_field(entity)) {
+                    return false;
+                }
+                const auto offset = std::meta::offset_of(entity);
+                if (offset.bits != 0) { return false; }
+                transient_ranges.push_back({static_cast<std::size_t>(offset.bytes), std::meta::size_of(entity)});
+            }
+        }
+        for (auto entity: entities) {
+            if (annotation_count(entity, ^^tag::transient) == 0) {
+                const auto offset = std::meta::offset_of(entity);
+                if (offset.bits != 0) { return false; }
+                const auto begin = static_cast<std::size_t>(offset.bytes);
+                const auto end = begin + std::meta::size_of(entity);
+                for (const auto transient: transient_ranges) {
+                    if (begin < transient.offset + transient.size && transient.offset < end) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    consteval auto leaf_copy_ranges(std::meta::info type) {
+        std::vector<byte_range> excluded;
+        for (auto entity: reflected_entities(type)) {
+            if (annotation_count(entity, ^^tag::transient) == 1) {
+                excluded.push_back({static_cast<std::size_t>(std::meta::offset_of(entity).bytes),
+                                    std::meta::size_of(entity)});
+            }
+        }
+        std::ranges::sort(excluded, {}, &byte_range::offset);
+        std::vector<byte_range> result;
+        std::size_t begin{};
+        for (const auto range: excluded) {
+            if (begin < range.offset) { result.push_back({begin, range.offset - begin}); }
+            begin = std::max(begin, range.offset + range.size);
+        }
+        if (begin < std::meta::size_of(type)) {
+            result.push_back({begin, std::meta::size_of(type) - begin});
+        }
+        return std::define_static_array(result);
+    }
+
+    consteval std::size_t byte_ranges_size(std::span<const byte_range> ranges) {
+        std::size_t result{};
+        for (const auto range: ranges) { result += range.size; }
+        return result;
+    }
+
+    // The caller establishes exactly one leaf annotation before reading its options.
+    consteval tag::leaf leaf_options(std::meta::info type) {
+        return std::meta::extract<tag::leaf>(
+            std::meta::annotations_of_with_type(type, ^^tag::leaf).front());
+    }
+
+    consteval bool leaf_uses_direct_object_representation_impl(std::meta::info type) {
+        return !has_transient_members(type)
+            && (leaf_options(type).allow_padding || std::meta::has_unique_object_representations(type));
+    }
+
+    consteval bool leaf_uses_segmented_object_representation_impl(std::meta::info type) {
+        return has_transient_members(type)
+            && (leaf_options(type).allow_padding || std::meta::has_unique_object_representations(type))
+            && std::meta::is_trivially_copyable_type(type)
+            && transient_layout_supports_segmented_copy(type);
+    }
+
+    consteval bool auto_leaf_supported(std::meta::info type) {
+        return std::meta::is_class_type(type)
+            && annotation_count(type, ^^tag::leaf) == 1
+            && annotation_count(type, ^^tag::auto_seq) == 0
+            && annotation_count(type, ^^tag::auto_stream) == 0
+            && annotation_count(type, ^^tag::bypass_pointer_check) <= 1
+            && (leaf_uses_direct_object_representation_impl(type)
+                || leaf_uses_segmented_object_representation_impl(type))
+            && std::meta::is_trivially_copyable_type(type)
+            && leaf_metadata_issue(type) == std::meta::info{};
+    }
+
+}

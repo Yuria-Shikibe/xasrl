@@ -27,7 +27,7 @@ namespace srl_test {
                 "content is not canonical little endian");
 
         auto entry = srl::detail::parse_entry(bytes.span());
-        require(entry.has_value() && entry->head.mapping_count() == 2,
+        require(entry.has_value() && entry->head().mapping_count() == 2,
                 "Pair mapping table did not parse");
 
         const auto direct_size = srl::serialized_size(Pair{.first = 0x11223344, .second = 0x55667788}, default_context);

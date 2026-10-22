@@ -5,29 +5,14 @@
 #include <functional>
 #include <meta>
 #include <stdexcept>
-#include <type_traits>
 #include <unordered_map>
 #include <utility>
 
-#include "wire.hpp"
+#include "types.hpp"
+#include "conversion.hpp"
 #include "limits.hpp"
 
 namespace srl {
-    namespace detail {
-        template<typename T>
-        inline unsigned char identity_token{};
-    }
-
-    template<typename Tag>
-    [[nodiscard]] constexpr const void *handler_key() noexcept {
-        return &detail::identity_token<std::remove_cvref_t<Tag>>;
-    }
-
-    struct conversion_tag {
-        std::meta::info target_type{};
-        const void *handler_id{};
-    };
-
     class context_reference_handler {
         const void *const memory_type_;
         const void *const storage_type_;
@@ -52,9 +37,9 @@ namespace srl {
 
     template<typename MemTy, typename SrlTy>
     class typed_reference_handler : public context_reference_handler {
-        static_assert(std::is_object_v<MemTy> && std::is_object_v<SrlTy>);
-        static_assert(std::same_as<MemTy, std::remove_cv_t<MemTy>>
-                      && std::same_as<SrlTy, std::remove_cv_t<SrlTy>>);
+        static_assert(std::meta::is_object_type(^^MemTy) && std::meta::is_object_type(^^SrlTy));
+        static_assert(std::meta::is_same_type(^^MemTy, std::meta::remove_cv(^^MemTy))
+                      && std::meta::is_same_type(^^SrlTy, std::meta::remove_cv(^^SrlTy)));
 
         error mem2srl(const void *mem, void *srl) final {
             return this->to_storage(*static_cast<const MemTy *>(mem), *static_cast<SrlTy *>(srl));
@@ -72,19 +57,14 @@ namespace srl {
         virtual error from_storage(MemTy &mem, const SrlTy &srl) = 0;
     };
 
-    enum class duplicate_policy : std::uint8_t {
-        deduplicate,
-        reject,
-    };
-
-    struct srl_ctx_config {
+    struct serialization_config {
         duplicate_policy duplicates{duplicate_policy::deduplicate};
         decode_limits limits{};
     };
 
     class serialization_context {
     public:
-        srl_ctx_config config;
+        serialization_config config;
 
     private:
         std::unordered_map<const void *, context_reference_handler*> handlers_;
@@ -92,7 +72,7 @@ namespace srl {
     public:
         serialization_context() = default;
 
-        explicit serialization_context(const srl_ctx_config& config) noexcept
+        explicit serialization_context(const serialization_config& config) noexcept
             : config(config) {}
 
         // Handlers and their services must outlive all operations using this context.

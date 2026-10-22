@@ -1,5 +1,7 @@
 #pragma once
 
+#include <meta>
+
 #include <bit>
 #include <climits>
 #include <cstddef>
@@ -7,7 +9,6 @@
 #include <optional>
 #include <stdexcept>
 #include <system_error>
-#include <type_traits>
 
 namespace srl {
     static_assert(CHAR_BIT == 8, "srl requires 8-bit bytes");
@@ -76,20 +77,19 @@ namespace srl {
         szt offset{};
     };
 
-    static_assert(std::is_standard_layout_v<storage_head>
-                  && std::is_trivially_copyable_v<storage_head>
+    static_assert(std::meta::is_standard_layout_type(^^storage_head)
+                  && std::meta::is_trivially_copyable_type(^^storage_head)
                   && sizeof(storage_head) == 16);
-    static_assert(std::is_standard_layout_v<entry_head>
-                  && std::is_trivially_copyable_v<entry_head>
+    static_assert(std::meta::is_standard_layout_type(^^entry_head)
+                  && std::meta::is_trivially_copyable_type(^^entry_head)
                   && sizeof(entry_head) == 16);
-    //TODO use c++26 reflection function
 
     static_assert(sizeof(entry_metadata) == 4);
     static_assert(offsetof(entry_head, size) == 0);
     static_assert(offsetof(entry_head, metadata) == 8);
     static_assert(offsetof(entry_head, wire_type) == 12);
-    static_assert(std::is_standard_layout_v<entry_mapping>
-                  && std::is_trivially_copyable_v<entry_mapping>
+    static_assert(std::meta::is_standard_layout_type(^^entry_mapping)
+                  && std::meta::is_trivially_copyable_type(^^entry_mapping)
                   && sizeof(entry_mapping) == 16);
     static_assert(offsetof(entry_mapping, id) == 0);
     static_assert(offsetof(entry_mapping, wire_type) == 4);
@@ -130,6 +130,7 @@ namespace srl {
         invalid_reference,
     };
 
+    //TODO make the error struct smaller
     struct error {
         error_code code{error_code::none};
         std::optional<id_type> id;
@@ -154,4 +155,16 @@ namespace srl {
             return *this;
         }
     };
+
+
+    struct always_success {
+        [[nodiscard]] constexpr explicit operator bool() const noexcept {
+            return true;
+        }
+
+        constexpr explicit(false) operator error() const noexcept {
+            return {};
+        }
+    };
+
 }

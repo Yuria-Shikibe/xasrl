@@ -114,4 +114,42 @@ namespace {
         EXPECT_EQ(value.values[0][0][0], 1);
         EXPECT_EQ(value.values[1][1].get_allocator().resource(), &memory);
     }
+
+    struct allocated_base {
+        std::pmr::vector<int> prefix;
+    };
+
+    struct mixed_allocated_arrays : allocated_base {
+        std::pmr::vector<int> first[2];
+        int marker;
+        std::pmr::vector<int> second[1][2];
+    };
+
+    TEST(Transaction, CloneMapsBasesAndSeparateArraysToTheirOwnResources) {
+        tracking_resource first_resource;
+        tracking_resource second_resource;
+        mixed_allocated_arrays original{
+            {std::pmr::vector<int>({10}, &first_resource)},
+            {std::pmr::vector<int>({20}, &first_resource), std::pmr::vector<int>({30}, &second_resource)},
+            40,
+            {{std::pmr::vector<int>({50}, &second_resource), std::pmr::vector<int>({60}, &first_resource)}},
+        };
+        auto copy = srl::transaction_traits<mixed_allocated_arrays>::clone(original);
+        EXPECT_EQ(copy.prefix.get_allocator().resource(), &first_resource);
+        EXPECT_EQ(copy.prefix[0], 10);
+        EXPECT_EQ(copy.first[0].get_allocator().resource(), &first_resource);
+        EXPECT_EQ(copy.first[1].get_allocator().resource(), &second_resource);
+        EXPECT_EQ(copy.first[0][0], 20);
+        EXPECT_EQ(copy.first[1][0], 30);
+        EXPECT_EQ(copy.marker, 40);
+        EXPECT_EQ(copy.second[0][0].get_allocator().resource(), &second_resource);
+        EXPECT_EQ(copy.second[0][1].get_allocator().resource(), &first_resource);
+        EXPECT_EQ(copy.second[0][0][0], 50);
+        EXPECT_EQ(copy.second[0][1][0], 60);
+        copy.first[1][0] = 99;
+        srl::transaction_traits<mixed_allocated_arrays>::commit(original, copy);
+        EXPECT_EQ(original.first[1][0], 99);
+        EXPECT_EQ(copy.first[1][0], 30);
+    }
+
 }

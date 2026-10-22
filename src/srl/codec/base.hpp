@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../enum.hpp"
+
 #include <algorithm>
 #include <concepts>
 #include <cstddef>
@@ -11,16 +13,10 @@
 #include <string_view>
 #include <type_traits>
 
-#include "../wire.hpp"
+#include "../detail/utility.hpp"
+#include "../detail/reflection_facts.hpp"
 
 namespace srl {
-    consteval std::meta::info recursively_dealias(std::meta::info info) {
-        if (std::meta::is_type_alias(info)) {
-            return recursively_dealias(std::meta::dealias(info));
-        }
-        return info;
-    }
-
     consteval type_hash_type type_hash(std::meta::info type) noexcept {
         return detail::hash_string(
             detail::fnv1a32_offset,
@@ -28,39 +24,28 @@ namespace srl {
     }
 
     template<typename T>
-    using codec_value_type = std::remove_cvref_t<T>;
-
-    template<typename T>
-    consteval type_hash_type type_hash() noexcept {
-        return type_hash(^^T);
-    }
+    using codec_value_type = typename[:std::meta::remove_cvref(^^T):];
 
     template<typename T>
     struct leaf_codec;
 
     template<typename T>
-    concept primitive = std::integral<T>
-                        || std::is_enum_v<T>
-                        || (std::floating_point<T> && (sizeof(T) == 4 || sizeof(T) == 8));
+    concept primitive = std::meta::is_integral_type(^^T)
+                        || std::meta::is_enum_type(^^T)
+                        || (std::meta::is_floating_point_type(^^T) && (sizeof(T) == 4 || sizeof(T) == 8));
 
     template<primitive T>
     struct leaf_codec<T> {
-        using wire_type = decltype([] {
-            if constexpr (std::is_enum_v<T>) {
-                return std::type_identity<std::underlying_type_t<T>>{};
-            } else {
-                return std::type_identity<T>{};
-            }
-        }())::type;
+        using wire_type = typename[:std::meta::is_enum_type(^^T) ? std::meta::underlying_type(^^T) : ^^T:];
 
-        static_assert(!std::floating_point<T> || std::numeric_limits<T>::is_iec559,
+        static_assert(!std::meta::is_floating_point_type(^^T) || std::numeric_limits<T>::is_iec559,
                       "srl floating codecs require IEC 559 representation");
         static constexpr szt fixed_size = sizeof(wire_type);
 
         [[nodiscard]] static error encode(
             const T &value,
             std::span<std::byte, fixed_size> destination) noexcept {
-            if constexpr (std::is_same_v<T, bool>) {
+            if constexpr (std::meta::is_same_type(^^T, ^^bool)) {
                 detail::write_trivial(destination, static_cast<std::uint8_t>(value));
             }else {
                 detail::write_trivial(destination, static_cast<wire_type>(value));
@@ -72,13 +57,13 @@ namespace srl {
         [[nodiscard]] static error decode(
             std::span<const std::byte, fixed_size> source,
             T &out) noexcept {
-            if constexpr (std::same_as<T, bool>) {
+            if constexpr (std::meta::is_same_type(^^T, ^^bool)) {
                 const auto value = detail::read_trivial<std::uint8_t>(source);
                 if (value > 1) {
                     return detail::fail(error_code::invalid_bool);
                 }
                 out = value != 0;
-            } else if constexpr (std::is_enum_v<T>) {
+            } else if constexpr (std::meta::is_enum_type(^^T)) {
                 const auto value = detail::read_trivial<wire_type>(source);
                 if (!srl::enum_contains<T>(value)) {
                     return detail::fail(error_code::invalid_enum_value);

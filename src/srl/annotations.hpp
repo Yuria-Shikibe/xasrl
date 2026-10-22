@@ -5,16 +5,17 @@
 #include <cstddef>
 #include <functional>
 #include <meta>
-#include <type_traits>
 
-#include "context.hpp"
-#include "wire.hpp"
+#include "conversion.hpp"
+#include "types.hpp"
 
 namespace srl {
     namespace defaults {
         // An explicit fallback<> uses T{}. Unannotated fields are required.
         // This does not re-evaluate the enclosing class's member initializer.
         struct initialized {};
+
+        //TODO support uninitialized ?
 
         // Value must be a template argument; T{Value} rejects narrowing conversions.
         template<auto Value>
@@ -31,26 +32,28 @@ namespace srl {
     }
 
     namespace detail {
+        template<typename T>
+        concept initialized_assignable = requires(T &out) { out = T{}; };
+
+        consteval bool initialized_fallback_valid(std::meta::info type) {
+            while (std::meta::is_bounded_array_type(type)) { type = std::meta::remove_extent(type); }
+            return std::meta::extract<bool>(std::meta::substitute(^^initialized_assignable, {type}));
+        }
+
         template<typename Policy>
         struct fallback_policy;
 
         template<>
         struct fallback_policy<defaults::initialized> {
             template<typename T>
-            static constexpr bool valid = [] consteval {
-                if constexpr (std::is_bounded_array_v<T>) {
-                    return valid<std::remove_extent_t<T>>;
-                } else {
-                    return requires(T &out) { out = T{}; };
-                }
-            }();
+            static constexpr bool valid = initialized_fallback_valid(^^T);
 
             template<typename T>
                 requires valid<T>
             static constexpr void apply(T &out, const serialization_context &context) {
-                if constexpr (std::is_bounded_array_v<T>) {
+                if constexpr (std::meta::is_bounded_array_type(^^T)) {
                     for (auto &element: out) {
-                        apply(element, context);
+                        fallback_policy::apply(element, context);
                     }
                 } else {
                     out = T{};
@@ -157,7 +160,17 @@ namespace srl {
             bool allow_padding{false};
         };
 
+        // Every subset of mask, including zero, is a valid enum value.
+        struct flags {
+            // Zero infers the mask by OR-ing all enumerators; the result must be nonzero.
+            std::uint64_t mask{};
+        };
+
+        //TODO
+        struct bypass_validation{};
+
         struct auto_seq {};
+
         struct auto_stream {};
 
         struct bypass_pointer_check {};
@@ -170,15 +183,9 @@ namespace srl {
     }
 
     namespace detail {
-        template<typename T>
-        inline constexpr bool is_fallback_v = false;
-
-        template<typename Policy>
-        inline constexpr bool is_fallback_v<tag::fallback<Policy>> = true;
-
         consteval bool is_fallback_annotation(std::meta::info annotation) {
-            return std::meta::extract<bool>(std::meta::substitute(^^is_fallback_v,
-                {std::meta::remove_cvref(std::meta::type_of(annotation))}));
+            const auto type = std::meta::remove_cvref(std::meta::type_of(annotation));
+            return std::meta::has_template_arguments(type) && std::meta::template_of(type) == ^^tag::fallback;
         }
 
         consteval std::size_t fallback_annotation_count(std::meta::info entity) {
