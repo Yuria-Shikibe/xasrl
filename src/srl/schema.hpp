@@ -17,7 +17,7 @@ namespace srl {
     template<typename T>
     concept reflected_record = has_serialized_fields<T>()
         && detail::annotation_count(^^codec_value_type<T>, ^^tag::auto_stream) == 0
-        && detail::annotation_count(^^codec_value_type<T>, ^^tag::atomic) == 0;
+        && detail::annotation_count(^^codec_value_type<T>, ^^tag::leaf) == 0;
 
     template<typename T>
     concept reflected_stream =
@@ -27,7 +27,7 @@ namespace srl {
     concept container_serializable = detail::adapted_container<codec_value_type<T>>;
 
     template<typename T>
-    concept serializable = atomic_serializable<T> || reflected_record<T>
+    concept serializable = leaf_serializable<T> || reflected_record<T>
                            || reflected_stream<T> || container_serializable<T>;
 
     template<typename T, bool Stream = reflected_stream<T>>

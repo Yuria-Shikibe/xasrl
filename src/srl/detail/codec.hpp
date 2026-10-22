@@ -41,7 +41,7 @@ namespace srl::detail {
     struct value_codec;
 
     template<const schema_tree &Tree, std::size_t Node>
-        requires (Tree.node(Node).kind == schema_kind::atomic)
+        requires (Tree.node(Node).kind == schema_kind::leaf)
     struct value_codec<Tree, Node> {
         using value_type = node_value_t<Tree, Node>;
         static constexpr auto descriptor = Tree.node(Node);
@@ -55,11 +55,11 @@ namespace srl::detail {
             error prepare(const value_type &, const serialization_context &) { return {}; }
 
             error encode(std::span<std::byte, static_extent> destination, const value_type &value) const {
-                if constexpr (descriptor.representation == atomic_representation::forced) {
+                if constexpr (descriptor.representation == leaf_representation::forced) {
                     encode_object_bytes<object>(value, destination);
                     return {};
                 } else {
-                    return atomic_codec<value_type>::encode(value, destination);
+                    return leaf_codec<value_type>::encode(value, destination);
                 }
             }
         };
@@ -73,11 +73,11 @@ namespace srl::detail {
             if (source.size() != extent) {
                 return fail(error_code::invalid_payload_shape, id, offset);
             }
-            if constexpr (descriptor.representation == atomic_representation::forced) {
+            if constexpr (descriptor.representation == leaf_representation::forced) {
                 auto status = decode_object_bytes<object>(source.template first<extent>(), out);
                 return status ? locate_error(status, id, offset) : error{};
             } else {
-                auto status = atomic_codec<value_type>::decode(source.template first<extent>(), out);
+                auto status = leaf_codec<value_type>::decode(source.template first<extent>(), out);
                 return status ? locate_error(status, id, offset) : error{};
             }
         }
@@ -627,11 +627,11 @@ namespace srl::detail {
             }
 
             error encode(std::span<std::byte, static_extent> destination, const T &value) const {
-                if constexpr (tree.node(node).kind == schema_kind::atomic) {
+                if constexpr (tree.node(node).kind == schema_kind::leaf) {
                     constexpr auto type_hash_value = tree.node(node).wire_type;
                     write_trivial(destination, entry_head{
                         .size = size,
-                        .metadata = {0, entry_kind::atomic},
+                        .metadata = {0, entry_kind::leaf},
                         .wire_type = type_hash_value,
                     });
                     return payload.encode(destination.template subspan<entry_head_wire_size>(), value);
@@ -644,8 +644,8 @@ namespace srl::detail {
         [[nodiscard]] static error decode_entry(
             const entry_view &entry, T &out, const serialization_context &context, decode_budget &budget) {
             constexpr auto type_hash_value = tree.node(node).wire_type;
-            if constexpr (tree.node(node).kind == schema_kind::atomic) {
-                if (entry.head.kind() != entry_kind::atomic) {
+            if constexpr (tree.node(node).kind == schema_kind::leaf) {
+                if (entry.head.kind() != entry_kind::leaf) {
                     return detail::fail(error_code::entry_kind_mismatch, std::nullopt, 11);
                 }
                 if (entry.head.wire_type != type_hash_value) {

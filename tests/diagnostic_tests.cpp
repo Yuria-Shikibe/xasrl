@@ -34,7 +34,7 @@ namespace {
         EXPECT_EQ(header.id, 5u);
     }
 
-    TEST(Diagnostics, AtomicRootOffsetIncludesHeader) {
+    TEST(Diagnostics, LeafRootOffsetIncludesHeader) {
         srl::serialization_context context;
         srl::byte_buffer bytes;
         ASSERT_FALSE(srl::serialize(false, bytes, context));

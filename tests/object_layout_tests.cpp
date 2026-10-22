@@ -4,22 +4,22 @@
 
 namespace {
     enum class mode : std::uint8_t { idle, active };
-    struct [[=srl::tag::atomic{}]] values {
+    struct [[=srl::tag::leaf{}]] values {
         bool enabled{};
         mode state{};
         mode states[2]{};
     };
-    struct [[=srl::tag::atomic{.allow_padding = true}]] padded {
+    struct [[=srl::tag::leaf{.allow_padding = true}]] padded {
         bool enabled{};
         std::uint32_t count{};
     };
-    struct [[=srl::tag::atomic{.allow_padding = true}]] segmented {
+    struct [[=srl::tag::leaf{.allow_padding = true}]] segmented {
         bool enabled{};
         [[=srl::tag::transient{}]] std::uint32_t cache = 99;
         mode state{};
     };
     struct forced {
-        [[=srl::tag::field{0}, =srl::tag::atomic{}]] values data;
+        [[=srl::tag::field{0}, =srl::tag::leaf{}]] values data;
     };
 
     template<typename T>
@@ -55,7 +55,7 @@ namespace {
         check_generated_validation<segmented>();
     }
 
-    TEST(ObjectLayout, ForcedAtomicUsesTheSameValidation) {
+    TEST(ObjectLayout, ForcedLeafUsesTheSameValidation) {
         srl::serialization_context context;
         srl::byte_buffer bytes;
         ASSERT_FALSE(srl::serialize(forced{}, bytes, context));

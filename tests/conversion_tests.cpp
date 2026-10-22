@@ -225,12 +225,12 @@ namespace conversion_tests {
         [[=srl::conversion_tag{^^int}]]
         [[=srl::conversion_tag{^^int}]] int value{};
     };
-    struct atomic_conflict {
+    struct leaf_conflict {
         [[=srl::tag::field{1}]]
-        [[=srl::tag::atomic{}]]
+        [[=srl::tag::leaf{}]]
         [[=srl::conversion_tag{^^int}]] int value{};
     };
-    struct [[=srl::tag::atomic{}]] atomic_conversion {
+    struct [[=srl::tag::leaf{}]] leaf_conversion {
         [[=srl::conversion_tag{^^int}]] int value{};
     };
     struct const_conversion {
@@ -301,8 +301,8 @@ namespace conversion_tests {
     });
     static_assert(!srl::schema_valid<missing_field_tag>());
     static_assert(!srl::schema_valid<duplicate_conversion>());
-    static_assert(!srl::schema_valid<atomic_conflict>());
-    static_assert(!srl::schema_valid<atomic_conversion>());
+    static_assert(!srl::schema_valid<leaf_conflict>());
+    static_assert(!srl::schema_valid<leaf_conversion>());
     static_assert(!srl::schema_valid<const_conversion>());
     static_assert(!srl::schema_valid<volatile_conversion>());
     static_assert(!srl::schema_valid<reference_conversion>());

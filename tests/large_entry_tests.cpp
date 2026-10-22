@@ -4,36 +4,36 @@
 
 namespace srl_test {
     template<srl::szt Extent>
-    struct [[=srl::tag::atomic{}]] SizingAtomic {};
+    struct [[=srl::tag::leaf{}]] SizingLeaf {};
 }
 
 namespace srl {
     // Sizing-only codec: these tests never form payload spans or invoke encoding.
     template<szt Extent>
-    struct atomic_codec<srl_test::SizingAtomic<Extent>> {
+    struct leaf_codec<srl_test::SizingLeaf<Extent>> {
         static constexpr szt fixed_size = Extent;
-        static error encode(const srl_test::SizingAtomic<Extent> &, std::span<std::byte, Extent>);
-        static error decode(std::span<const std::byte, Extent>, srl_test::SizingAtomic<Extent> &);
+        static error encode(const srl_test::SizingLeaf<Extent> &, std::span<std::byte, Extent>);
+        static error decode(std::span<const std::byte, Extent>, srl_test::SizingLeaf<Extent> &);
     };
 }
 
 namespace srl_test {
     constexpr srl::szt large_extent = (srl::szt{1} << 32) + 7;
-    using LargeAtomic = SizingAtomic<large_extent>;
+    using LargeLeaf = SizingLeaf<large_extent>;
 
     struct [[=srl::tag::auto_seq{}]] LargeRecord {
-        LargeAtomic large;
+        LargeLeaf large;
         std::vector<int> dynamic;
     };
 
     struct [[=srl::tag::auto_stream{}]] LargeStream {
-        LargeAtomic large;
+        LargeLeaf large;
         std::vector<int> dynamic;
     };
 
-    static_assert(srl::schema_valid<LargeAtomic>());
-    static_assert(srl::schema<LargeAtomic>::tree.node(0).encode_extent == large_extent + 16);
-    static_assert(!srl::schema_valid<SizingAtomic<srl::detail::maximum_entry_size - 8>>());
+    static_assert(srl::schema_valid<LargeLeaf>());
+    static_assert(srl::schema<LargeLeaf>::tree.node(0).encode_extent == large_extent + 16);
+    static_assert(!srl::schema_valid<SizingLeaf<srl::detail::maximum_entry_size - 8>>());
     static_assert(srl::schema_valid<std::array<int, srl::entry_metadata::max_mapping_count>>());
     static_assert(!srl::schema_valid<std::array<int, srl::entry_metadata::max_mapping_count + 1>>());
     static_assert([] consteval {
@@ -57,8 +57,8 @@ namespace srl_test {
     static_assert(srl::entry_metadata{0, srl::entry_kind::stream}.kind() == srl::entry_kind::stream);
 
     TEST(LargeEntries, SizePlanningBeyondFourGiB) {
-        EXPECT_EQ(srl::serialized_size(LargeAtomic{}, default_context), large_extent + 16);
-        EXPECT_EQ(*srl::serialized_size(std::vector<LargeAtomic>(2), default_context),
+        EXPECT_EQ(srl::serialized_size(LargeLeaf{}, default_context), large_extent + 16);
+        EXPECT_EQ(*srl::serialized_size(std::vector<LargeLeaf>(2), default_context),
                   16 + 2 * (16 + large_extent));
         EXPECT_EQ(*srl::serialized_size(LargeRecord{}, default_context), 16 + 32 + large_extent + 16);
         EXPECT_EQ(*srl::serialized_size(LargeStream{}, default_context), 16 + large_extent + 16);
@@ -91,7 +91,7 @@ namespace srl_test {
         srl::byte_buffer bytes;
         bytes.resize(16);
         srl::detail::write_trivial(bytes.span(), srl::entry_head{
-            .size = large_extent, .metadata = {0, srl::entry_kind::atomic}, .wire_type = 0x12345678u,
+            .size = large_extent, .metadata = {0, srl::entry_kind::leaf}, .wire_type = 0x12345678u,
         });
         EXPECT_EQ(get_u64(bytes, 0), large_extent);
         EXPECT_EQ(bytes[4], std::byte{1});
@@ -120,7 +120,7 @@ namespace srl_test {
     }
 
     TEST(WireFormat, ClassificationAndTableValidation) {
-        for (const auto kind : {srl::entry_kind::atomic, srl::entry_kind::stream, srl::entry_kind::record,
+        for (const auto kind : {srl::entry_kind::leaf, srl::entry_kind::stream, srl::entry_kind::record,
                                 srl::entry_kind::sequence, srl::entry_kind::map}) {
             srl::byte_buffer bytes;
             bytes.resize(16);

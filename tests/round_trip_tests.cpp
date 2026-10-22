@@ -52,13 +52,13 @@ namespace srl_test {
                 && profile_copy.state == activity::running
                 && profile_copy.position.x == profile.position.x
                 && profile_copy.position.y == profile.position.y,
-                "nested record or atomic field failed to round trip");
+                "nested record or leaf field failed to round trip");
         require(profile_copy.person.runtime_cookie == 41
                 && profile_copy.runtime_handle == nullptr,
                 "nested unmarked state did not keep defaults");
     }
 
-    void test_atomic_round_trips() {
+    void test_leaf_round_trips() {
         const Vec2 vector{.x = 1.5f, .y = -2.25f};
         srl::byte_buffer vector_bytes{};
         const auto vector_bytes_status = srl::serialize(vector, vector_bytes, default_context);
@@ -79,7 +79,7 @@ namespace srl_test {
         require(!vector_copy_status
                 && vector_copy.x == vector.x
                 && vector_copy.y == vector.y,
-                "Vec2 atomic round trip failed");
+                "Vec2 leaf round trip failed");
 
         const Rect rectangle{
             .minimum = Vec2{.x = -1.0f, .y = -2.0f},
@@ -93,7 +93,7 @@ namespace srl_test {
         require(!rectangle_copy_status
                 && rectangle_copy.minimum.x == rectangle.minimum.x
                 && rectangle_copy.maximum.y == rectangle.maximum.y,
-                "nested atomic members failed to round trip");
+                "nested leaf members failed to round trip");
 
         const SmallText text{.value = "container-backed string"};
         srl::byte_buffer text_bytes{};
@@ -160,38 +160,38 @@ namespace srl_test {
                 && type_bypass_copy.value == type_bypass.value,
                 "type-level auto_seq bypass failed to preserve pointer representation");
 
-        const PaddedAtomic padded{.small = 7, .large = 0x11223344u};
+        const PaddedLeaf padded{.small = 7, .large = 0x11223344u};
         srl::byte_buffer padded_bytes{};
         const auto padded_bytes_status = srl::serialize(padded, padded_bytes, default_context);
         require(!padded_bytes_status
-                && padded_bytes.size() == srl::detail::entry_head_wire_size + sizeof(PaddedAtomic),
-                "padding-enabled atomic size is incorrect");
+                && padded_bytes.size() == srl::detail::entry_head_wire_size + sizeof(PaddedLeaf),
+                "padding-enabled leaf size is incorrect");
         const auto padded_payload = padded_bytes.span().subspan(srl::detail::entry_head_wire_size);
         require(padded_payload[0] == std::byte{7}
                 && padded_payload[1] == std::byte{0}
                 && padded_payload[2] == std::byte{0}
                 && padded_payload[3] == std::byte{0}
                 && srl::detail::read_trivial<std::uint32_t>(padded_payload.subspan(4)) == 0x11223344u,
-                "padding-enabled atomic must emit canonical zero padding");
-        PaddedAtomic padded_copy{};
+                "padding-enabled leaf must emit canonical zero padding");
+        PaddedLeaf padded_copy{};
         const auto padded_copy_status = srl::deserialize(padded_bytes.span(), padded_copy, default_context);
         require(!padded_copy_status
                 && padded_copy.small == padded.small
                 && padded_copy.large == padded.large,
-                "padding-enabled atomic failed to round trip");
+                "padding-enabled leaf failed to round trip");
 
-        const UniqueAtomic unique{.first = 11, .second = 22};
+        const UniqueLeaf unique{.first = 11, .second = 22};
         srl::byte_buffer unique_bytes{};
         const auto unique_bytes_status = srl::serialize(unique, unique_bytes, default_context);
-        require(!unique_bytes_status, "unique-representation atomic packing failed");
-        UniqueAtomic unique_copy{};
+        require(!unique_bytes_status, "unique-representation leaf packing failed");
+        UniqueLeaf unique_copy{};
         const auto unique_copy_status = srl::deserialize(unique_bytes.span(), unique_copy, default_context);
         require(!unique_copy_status
                 && unique_copy.first == unique.first
                 && unique_copy.second == unique.second,
-                "unique-representation atomic failed to round trip");
+                "unique-representation leaf failed to round trip");
 
-        const TransientAtomic transient{
+        const TransientLeaf transient{
             .first = 0x11223344u,
             .second = 0x55667788u,
             .runtime_only = 99,
@@ -203,8 +203,8 @@ namespace srl_test {
         require(!transient_bytes_status
                 && transient_bytes.size()
                        == srl::detail::entry_head_wire_size + sizeof(std::uint32_t) * 4,
-                "transient atomic size is incorrect");
-        TransientAtomic transient_copy{};
+                "transient leaf size is incorrect");
+        TransientLeaf transient_copy{};
         const auto transient_copy_status = srl::deserialize(transient_bytes.span(), transient_copy, default_context);
         require(!transient_copy_status
                 && transient_copy.first == transient.first
@@ -212,18 +212,18 @@ namespace srl_test {
                 && transient_copy.runtime_only == 17
                 && transient_copy.third == transient.third
                 && transient_copy.fourth == transient.fourth,
-                "transient atomic member was serialized or lost its default");
+                "transient leaf member was serialized or lost its default");
 
         int transient_pointee = 42;
-        const TransientPointerAtomic transient_pointer{
+        const TransientPointerLeaf transient_pointer{
             .runtime_pointer = &transient_pointee,
             .value = 0x12345678u,
         };
         srl::byte_buffer transient_pointer_bytes{};
         const auto transient_pointer_bytes_status = srl::serialize(transient_pointer, transient_pointer_bytes, default_context);
         require(!transient_pointer_bytes_status,
-                "transient pointer atomic packing failed");
-        TransientPointerAtomic transient_pointer_copy{};
+                "transient pointer leaf packing failed");
+        TransientPointerLeaf transient_pointer_copy{};
         const auto transient_pointer_copy_status = srl::deserialize(transient_pointer_bytes.span(), transient_pointer_copy, default_context);
         require(!transient_pointer_copy_status
                 && transient_pointer_copy.runtime_pointer == nullptr
@@ -231,44 +231,44 @@ namespace srl_test {
                 "transient pointer leaked into serialized object representation");
 
         int pointee = 42;
-        const BypassedAtomicPointer bypassed{.pointer = &pointee};
+        const BypassedLeafPointer bypassed{.pointer = &pointee};
         srl::byte_buffer bypassed_bytes{};
         const auto bypassed_bytes_status = srl::serialize(bypassed, bypassed_bytes, default_context);
-        require(!bypassed_bytes_status, "bypassed pointer atomic packing failed");
-        BypassedAtomicPointer bypassed_copy{};
+        require(!bypassed_bytes_status, "bypassed pointer leaf packing failed");
+        BypassedLeafPointer bypassed_copy{};
         const auto bypassed_copy_status = srl::deserialize(bypassed_bytes.span(), bypassed_copy, default_context);
         require(!bypassed_copy_status && bypassed_copy.pointer == &pointee,
-                "bypassed pointer atomic failed to preserve its representation");
+                "bypassed pointer leaf failed to preserve its representation");
 
-        const AtomicEntityBypass atomic_entity_bypass{.pointer = &pointee};
-        srl::byte_buffer atomic_entity_bytes{};
-        const auto atomic_entity_bytes_status = srl::serialize(atomic_entity_bypass, atomic_entity_bytes, default_context);
-        require(!atomic_entity_bytes_status, "entity-level atomic bypass packing failed");
-        AtomicEntityBypass atomic_entity_copy{};
-        const auto atomic_entity_copy_status = srl::deserialize(atomic_entity_bytes.span(), atomic_entity_copy, default_context);
-        require(!atomic_entity_copy_status && atomic_entity_copy.pointer == &pointee,
-                "entity-level atomic bypass failed to preserve pointer representation");
+        const LeafEntityBypass leaf_entity_bypass{.pointer = &pointee};
+        srl::byte_buffer leaf_entity_bytes{};
+        const auto leaf_entity_bytes_status = srl::serialize(leaf_entity_bypass, leaf_entity_bytes, default_context);
+        require(!leaf_entity_bytes_status, "entity-level leaf bypass packing failed");
+        LeafEntityBypass leaf_entity_copy{};
+        const auto leaf_entity_copy_status = srl::deserialize(leaf_entity_bytes.span(), leaf_entity_copy, default_context);
+        require(!leaf_entity_copy_status && leaf_entity_copy.pointer == &pointee,
+                "entity-level leaf bypass failed to preserve pointer representation");
 
-        AtomicBaseBypass atomic_base_bypass{};
-        atomic_base_bypass.pointer = &pointee;
-        srl::byte_buffer atomic_base_bytes{};
-        const auto atomic_base_bytes_status = srl::serialize(atomic_base_bypass, atomic_base_bytes, default_context);
-        require(!atomic_base_bytes_status, "base-level atomic bypass packing failed");
-        AtomicBaseBypass atomic_base_copy{};
-        const auto atomic_base_copy_status = srl::deserialize(atomic_base_bytes.span(), atomic_base_copy, default_context);
-        require(!atomic_base_copy_status && atomic_base_copy.pointer == &pointee,
-                "base-level atomic bypass failed to preserve pointer representation");
+        LeafBaseBypass leaf_base_bypass{};
+        leaf_base_bypass.pointer = &pointee;
+        srl::byte_buffer leaf_base_bytes{};
+        const auto leaf_base_bytes_status = srl::serialize(leaf_base_bypass, leaf_base_bytes, default_context);
+        require(!leaf_base_bytes_status, "base-level leaf bypass packing failed");
+        LeafBaseBypass leaf_base_copy{};
+        const auto leaf_base_copy_status = srl::deserialize(leaf_base_bytes.span(), leaf_base_copy, default_context);
+        require(!leaf_base_copy_status && leaf_base_copy.pointer == &pointee,
+                "base-level leaf bypass failed to preserve pointer representation");
 
-        const ForcedAtomicField forced{
+        const ForcedLeafField forced{
             .value = ThirdPartyTrivial{.first = 0x11223344u, .second = 0x55667788u},
         };
         srl::byte_buffer forced_bytes{};
         const auto forced_bytes_status = srl::serialize(forced, forced_bytes, default_context);
-        require(!forced_bytes_status, "field-level forced atomic packing failed");
-        ForcedAtomicField forced_copy{};
+        require(!forced_bytes_status, "field-level forced leaf packing failed");
+        ForcedLeafField forced_copy{};
         const auto forced_copy_status = srl::deserialize(forced_bytes.span(), forced_copy, default_context);
         require(!forced_copy_status && forced_copy.value == forced.value,
-                "field-level forced atomic failed to round trip");
+                "field-level forced leaf failed to round trip");
     }
 
 
@@ -276,7 +276,7 @@ TEST(SerializationRoundTrip, Records) {
     test_record_round_trips();
 }
 
-TEST(SerializationRoundTrip, AtomicValues) {
-    test_atomic_round_trips();
+TEST(SerializationRoundTrip, LeafValues) {
+    test_leaf_round_trips();
 }
 }

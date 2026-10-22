@@ -47,23 +47,23 @@ struct [[=srl::tag::auto_seq{}]] Rect {
     Vec2 maximum{};
 };
 
-struct [[=srl::tag::atomic{.allow_padding = true}]] PaddedAtomic {
+struct [[=srl::tag::leaf{.allow_padding = true}]] PaddedLeaf {
     std::uint8_t small{};
     std::uint32_t large{};
 };
 
-struct [[=srl::tag::atomic{}]] UniqueAtomic {
+struct [[=srl::tag::leaf{}]] UniqueLeaf {
     std::uint32_t first{};
     std::uint32_t second{};
 };
 
-struct [[=srl::tag::atomic{}]] NonTrivialMemberwiseAtomic {
+struct [[=srl::tag::leaf{}]] NonTrivialMemberwiseLeaf {
     float value{};
 
-    ~NonTrivialMemberwiseAtomic() {}
+    ~NonTrivialMemberwiseLeaf() {}
 };
 
-struct [[=srl::tag::atomic{}]] TransientAtomic {
+struct [[=srl::tag::leaf{}]] TransientLeaf {
     std::uint32_t first{};
     std::uint32_t second{};
 
@@ -74,7 +74,7 @@ struct [[=srl::tag::atomic{}]] TransientAtomic {
     std::uint32_t fourth{};
 };
 
-struct [[=srl::tag::atomic{.allow_padding = true}]] TransientPointerAtomic {
+struct [[=srl::tag::leaf{.allow_padding = true}]] TransientPointerLeaf {
     [[=srl::tag::transient{}]]
     int *runtime_pointer{};
 
@@ -89,49 +89,49 @@ struct InvalidRecordTransient {
     std::uint32_t runtime_only{};
 };
 
-struct [[=srl::tag::atomic{}]] AtomicBase {
+struct [[=srl::tag::leaf{}]] LeafBase {
     float base_value{};
 };
 
-struct [[=srl::tag::atomic{}]] DerivedAtomic : AtomicBase {
+struct [[=srl::tag::leaf{}]] DerivedLeaf : LeafBase {
     std::uint32_t derived_value{};
 
-    ~DerivedAtomic() {}
+    ~DerivedLeaf() {}
 };
 
-struct [[=srl::tag::atomic{}]] PrivateDerivedAtomic : private AtomicBase {
-    std::uint32_t derived_value{};
-
-    void set_base_value(float value) {
-        AtomicBase::base_value = value;
-    }
-
-    [[nodiscard]] float get_base_value() const {
-        return AtomicBase::base_value;
-    }
-
-    ~PrivateDerivedAtomic() {}
-};
-
-struct [[=srl::tag::atomic{}]] ProtectedDerivedAtomic : protected AtomicBase {
+struct [[=srl::tag::leaf{}]] PrivateDerivedLeaf : private LeafBase {
     std::uint32_t derived_value{};
 
     void set_base_value(float value) {
-        AtomicBase::base_value = value;
+        LeafBase::base_value = value;
     }
 
     [[nodiscard]] float get_base_value() const {
-        return AtomicBase::base_value;
+        return LeafBase::base_value;
     }
 
-    ~ProtectedDerivedAtomic() {}
+    ~PrivateDerivedLeaf() {}
 };
 
-struct [[=srl::tag::atomic{}]] VirtualDerivedAtomic : virtual AtomicBase {
+struct [[=srl::tag::leaf{}]] ProtectedDerivedLeaf : protected LeafBase {
+    std::uint32_t derived_value{};
+
+    void set_base_value(float value) {
+        LeafBase::base_value = value;
+    }
+
+    [[nodiscard]] float get_base_value() const {
+        return LeafBase::base_value;
+    }
+
+    ~ProtectedDerivedLeaf() {}
+};
+
+struct [[=srl::tag::leaf{}]] VirtualDerivedLeaf : virtual LeafBase {
     std::uint32_t derived_value{};
 };
 
-struct [[=srl::tag::atomic{.allow_padding = true}]] NonTrivialPaddedAtomic {
+struct [[=srl::tag::leaf{.allow_padding = true}]] NonTrivialPaddedLeaf {
     std::string value{};
 };
 
@@ -191,24 +191,24 @@ struct [[=srl::tag::auto_seq{}]] AutoSequenceRejectedPointer {
     int *pointer{};
 };
 
-struct [[=srl::tag::atomic{}]] AtomicEntityBypass {
+struct [[=srl::tag::leaf{}]] LeafEntityBypass {
     [[=srl::tag::bypass_pointer_check{}]]
     int *pointer{};
 };
 
-struct AtomicPointerBase {
+struct LeafPointerBase {
     int *pointer{};
 };
 
-struct [[=srl::tag::atomic{}]] AtomicBaseBypass
-    : [[=srl::tag::bypass_pointer_check{}]] AtomicPointerBase {};
+struct [[=srl::tag::leaf{}]] LeafBaseBypass
+    : [[=srl::tag::bypass_pointer_check{}]] LeafPointerBase {};
 
-struct [[=srl::tag::atomic{}]] RuntimeFixedSize {};
-struct [[=srl::tag::atomic{}]] DynamicSpanCodec {};
+struct [[=srl::tag::leaf{}]] RuntimeFixedSize {};
+struct [[=srl::tag::leaf{}]] DynamicSpanCodec {};
 
 namespace srl {
     template<>
-    struct atomic_codec<RuntimeFixedSize> {
+    struct leaf_codec<RuntimeFixedSize> {
         static inline std::size_t fixed_size = 0;
 
         [[nodiscard]] static error encode(
@@ -225,7 +225,7 @@ namespace srl {
     };
 
     template<>
-    struct atomic_codec<DynamicSpanCodec> {
+    struct leaf_codec<DynamicSpanCodec> {
         static constexpr std::size_t fixed_size = 0;
 
         [[nodiscard]] static error encode(
@@ -294,20 +294,20 @@ struct MarkedPointer {
     int *pointer{};
 };
 
-struct [[=srl::tag::atomic{}]] AtomicPointer {
+struct [[=srl::tag::leaf{}]] LeafPointer {
     int *pointer{};
 };
 
-struct [[=srl::tag::atomic{}]]
-       [[=srl::tag::bypass_pointer_check{}]] BypassedAtomicPointer {
+struct [[=srl::tag::leaf{}]]
+       [[=srl::tag::bypass_pointer_check{}]] BypassedLeafPointer {
     int *pointer{};
 };
 
-struct [[=srl::tag::atomic{}]] UnsupportedVariableAtomic {
+struct [[=srl::tag::leaf{}]] UnsupportedVariableLeaf {
     std::string value{};
 };
 
-struct [[=srl::tag::atomic{}]] AmbiguousAtomic {
+struct [[=srl::tag::leaf{}]] AmbiguousLeaf {
     [[=srl::tag::field{.id = 1}]]
     int value{};
 };
@@ -331,21 +331,21 @@ struct ThirdPartyTrivial {
     constexpr auto operator<=>(const ThirdPartyTrivial &) const noexcept = default;
 };
 
-struct ForcedAtomicField {
+struct ForcedLeafField {
     [[=srl::tag::field{.id = 1}]]
-    [[=srl::tag::atomic{}]]
+    [[=srl::tag::leaf{}]]
     ThirdPartyTrivial value{};
 };
 
 struct ForcedPointerField {
     [[=srl::tag::field{.id = 1}]]
-    [[=srl::tag::atomic{}]]
+    [[=srl::tag::leaf{}]]
     int *value{};
 };
 
 struct BypassedPointerField {
     [[=srl::tag::field{.id = 1}]]
-    [[=srl::tag::atomic{}]]
+    [[=srl::tag::leaf{}]]
     [[=srl::tag::bypass_pointer_check{}]]
     int *value{};
 };

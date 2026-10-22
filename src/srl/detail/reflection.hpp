@@ -132,7 +132,7 @@ namespace srl::detail {
     }
 
     template<typename T>
-    consteval auto atomic_copy_ranges() {
+    consteval auto leaf_copy_ranges() {
         std::vector<byte_range> excluded;
         detail::for_each_reflected_entity<T>(
             [&]<std::meta::info Entity, reflected_entity_kind> {
@@ -175,20 +175,20 @@ namespace srl::detail {
     }
 
     template<typename T>
-    consteval std::size_t atomic_annotation_count() {
+    consteval std::size_t leaf_annotation_count() {
         if constexpr (!std::is_class_v<T>) {
             return 0;
         } else {
-            return std::meta::annotations_of_with_type(^^T, ^^tag::atomic).size();
+            return std::meta::annotations_of_with_type(^^T, ^^tag::leaf).size();
         }
     }
 
     template<typename T>
-    consteval tag::atomic atomic_options() {
-        static_assert(atomic_annotation_count<T>() == 1);
+    consteval tag::leaf leaf_options() {
+        static_assert(leaf_annotation_count<T>() == 1);
         static constexpr auto annotations = std::define_static_array(
-            std::meta::annotations_of_with_type(^^T, ^^tag::atomic));
-        return std::meta::extract<tag::atomic>(annotations.front());
+            std::meta::annotations_of_with_type(^^T, ^^tag::leaf));
+        return std::meta::extract<tag::leaf>(annotations.front());
     }
 
     template<typename T>
@@ -234,17 +234,17 @@ namespace srl::detail {
     }
 
     template<typename T>
-    consteval bool atomic_uses_direct_object_representation_impl() {
-        static_assert(atomic_annotation_count<T>() == 1);
+    consteval bool leaf_uses_direct_object_representation_impl() {
+        static_assert(leaf_annotation_count<T>() == 1);
         return !has_transient_members<T>()
-               && (atomic_options<T>().allow_padding
+               && (leaf_options<T>().allow_padding
                    || std::has_unique_object_representations_v<T>);
     }
 
     template<typename T>
-    consteval bool atomic_uses_segmented_object_representation_impl() {
+    consteval bool leaf_uses_segmented_object_representation_impl() {
         if constexpr (!has_transient_members<T>()
-                      || !(atomic_options<T>().allow_padding
+                      || !(leaf_options<T>().allow_padding
                            || std::has_unique_object_representations_v<T>)
                       || !std::is_trivially_copyable_v<T>
                       || !transient_layout_supports_segmented_copy<T>()) {
@@ -255,18 +255,18 @@ namespace srl::detail {
     }
 
     template<typename T>
-    consteval bool auto_atomic_supported() {
+    consteval bool auto_leaf_supported() {
         if constexpr (!std::is_class_v<T>) {
             return false;
-        } else if constexpr (atomic_annotation_count<T>() != 1) {
+        } else if constexpr (leaf_annotation_count<T>() != 1) {
             return false;
         } else if constexpr (auto_seq_annotation_count<T>() != 0
                              || auto_stream_annotation_count<T>() != 0) {
             return false;
         } else if constexpr (bypass_pointer_check_annotation_count<T>() > 1) {
             return false;
-        } else if constexpr (!(atomic_uses_direct_object_representation_impl<T>()
-                               || atomic_uses_segmented_object_representation_impl<T>())) {
+        } else if constexpr (!(leaf_uses_direct_object_representation_impl<T>()
+                               || leaf_uses_segmented_object_representation_impl<T>())) {
             return false;
         } else if constexpr (!std::is_trivially_copyable_v<T>) {
             return false;
@@ -282,7 +282,7 @@ namespace srl::detail {
                                   || (transient_count == 1
                                       && (Kind != reflected_entity_kind::member
                                           || !std::meta::annotations_of_with_type(Entity, ^^tag::field).empty()
-                                          || !std::meta::annotations_of_with_type(Entity, ^^tag::atomic).empty()
+                                          || !std::meta::annotations_of_with_type(Entity, ^^tag::leaf).empty()
                                           || !std::meta::annotations_of_with_type(Entity, ^^tag::container).empty()
                                           || bypass_count != 0
                                           || conversion_count<Entity>() != 0))) {
@@ -296,7 +296,7 @@ namespace srl::detail {
                                              && (std::meta::is_bit_field(Entity)
                                                  || std::is_reference_v<declared_type>))
                                          || !std::meta::annotations_of_with_type(Entity, ^^tag::field).empty()
-                                         || !std::meta::annotations_of_with_type(Entity, ^^tag::atomic).empty()
+                                         || !std::meta::annotations_of_with_type(Entity, ^^tag::leaf).empty()
                                          || !std::meta::annotations_of_with_type(Entity, ^^tag::container).empty()
                                          || conversion_count<Entity>() != 0) {
                         valid = false;

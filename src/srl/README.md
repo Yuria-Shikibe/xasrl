@@ -5,11 +5,11 @@
 ## 文件结构
 
 - `types.hpp`：公开基础类型、wire header、错误码与错误对象。
-- `annotations.hpp`：字段、原子类型和容器注解。
+- `annotations.hpp`：字段、叶节点类型和容器注解。
 - `container.hpp`：容器 traits、容器适配约束与插入工具。
 - `context.hpp`：引用转换 handler 与序列化上下文。
-- `codec/base.hpp`：`atomic_codec` 接口及基础类型特化。
-- `codec/reflected.hpp`：由对象表示自动生成的原子 codec 特化。
+- `codec/base.hpp`：`leaf_codec` 接口及基础类型特化。
+- `codec/reflected.hpp`：由对象表示自动生成的叶节点 codec 特化。
 - `schema.hpp`：可序列化概念、`schema<T>` 编译期查询入口和静态校验。
 - `schema/model.hpp`：schema 节点、树视图及非模板查询接口。
 - `schema/build.hpp`：非模板 `consteval` 树构建、注解校验及尺寸计算。
@@ -22,7 +22,7 @@
 - `serialization.hpp`：`serialize`、`deserialize` 与 `serialized_size` 公共 API。
 - `transaction.hpp`：保留 allocator 的事务副本与无异常提交定制。
 - `limits.hpp`：输入大小、容器元素数和累计元素存储预算。
-- `detail/object_layout.hpp`：对象原子成员布局；供编码、输入校验和 schema 测试共用。
+- `detail/object_layout.hpp`：对象叶节点成员布局；供编码、输入校验和 schema 测试共用。
 - `wire.hpp`、`core.hpp`：保持稳定 include 路径的聚合入口。
 - `io.hpp`：只处理字节的磁盘块读写 `write_block`、`read_block`。
 
@@ -91,7 +91,7 @@ span 的 `Extent` 从实参推导，类型编码尺寸与 span 长度均已知�
 
 ## 反射记录
 
-非原子记录只序列化带有稳定 ID 的成员和直接非虚基类：
+非叶节点记录只序列化带有稳定 ID 的成员和直接非虚基类：
 
 ```cpp
 struct Person {
@@ -179,14 +179,14 @@ struct [[=srl::tag::auto_stream{}]] State
 注解可以放在类型、字段或直接基类上。字段／基类注解只覆盖当前位置的子对象，
 允许普通未标注类、显式 record 和 `auto_seq` 类；不会递归改变更深层类型的编码。
 显式 record 的父字段仍需要 `field{id}`，该 ID 属于父 record。
-局部覆盖不支持 atomic 类型、自定义 atomic codec 类型、容器或非类类型。
-类型级 `auto_stream` 与 `auto_seq`、`atomic` 互斥；字段级注解不能与
-`atomic`、`container`、`transient` 或 `bypass_pointer_check` 同时使用。
+局部覆盖不支持 leaf 类型、自定义 leaf codec 类型、容器或非类类型。
+类型级 `auto_stream` 与 `auto_seq`、`leaf` 互斥；字段级注解不能与
+`leaf`、`container`、`transient` 或 `bypass_pointer_check` 同时使用。
 与 `conversion_tag` 同时使用时，stream 模式应用于转换后的持久化类型。
 
 wire 使用 16 字节 `entry_head`，`kind() = entry_kind::stream (2)`、
 `mapping_count() = 0`，随后直接拼接各实体 payload。
-原子字段按 codec 固定长度读取，复合字段通过自己的 entry header 确定长度，
+叶节点字段按 codec 固定长度读取，复合字段通过自己的 entry header 确定长度，
 容器保留原有元素映射。每个 stream 相比具有相同 payload 的 `auto_seq` 每字段减少
 16 字节。使用小端字节序和 storage version 4，不兼容旧版本。
 
@@ -298,7 +298,7 @@ context.register_handler(srl::handler_key<AssetReferenceKey>(), handler);
   容器迭代顺序和外部解析环境必须稳定，库不对外部系统提供快照或锁定。
 
 转换仅作用于普通可写成员，禁止引用、const/volatile 成员、bit-field、基类转换、重复标记、
-与字段强制 `atomic` 并用，以及自动原子类型内部的转换。`SrlTy` 必须是可默认构造、可移动
+与字段强制 `leaf` 并用，以及自动叶节点类型内部的转换。`SrlTy` 必须是可默认构造、可移动
 的可序列化值类型，`MemTy` 必须可赋值；编译期拒绝循环 schema。
 
 字段转换针对整个字段，不自动传播到容器元素；但转换后的记录或容器内部可以继续包含转换字段。
@@ -308,7 +308,7 @@ context.register_handler(srl::handler_key<AssetReferenceKey>(), handler);
 
 ## 容器
 
-容器是独立于原子和反射记录的第三类 entry。库自动识别可重复遍历、可清空并可重新插入
+容器是独立于叶节点和反射记录的第三类 entry。库自动识别可重复遍历、可清空并可重新插入
 元素的 owning range，并根据容器能力选择 `reserve`、尾插、普通插入或 `insert_after`。
 如果 `ranges::size` 在值未知的 range 引用上仍可作为常量表达式，`container_traits`
 会自动把尺寸认定为由类型决定的固定长度；这覆盖 `std::array`、原生数组 `T[N]` 以及
@@ -353,22 +353,22 @@ srl::serialization_context context{
 std::set<int> ids;
 ```
 
-## 原子类型
+## 叶节点类型
 
-原子类型是序列化树的叶节点，其 content 中不再启动嵌套 entry。用户定义类型在类型声明
+叶节点类型作为一个整体参与序列化，其 content 中不再启动嵌套 entry。用户定义类型在类型声明
 处标记：
 
 ```cpp
-struct [[=srl::tag::atomic{}]] Vec2 {
+struct [[=srl::tag::leaf{}]] Vec2 {
     float x{};
     float y{};
 };
 ```
 
-`atomic` 标记包含一个选项：
+`leaf` 标记包含一个选项：
 
 ```cpp
-struct atomic {
+struct leaf {
     bool allow_padding{false};
 };
 ```
@@ -382,14 +382,14 @@ struct atomic {
 不再回退到逐基类、逐成员调用子对象 codec。需要按实体顺序编码的类型应改用 `auto_seq`。
 
 编译期生成的 `schema_node::object` 记录每个标量成员的对象偏移、wire 偏移、尺寸和类型。
-自动和强制 atomic 共用此布局：读取先验证 bool／枚举，再复制有效成员；非法对象表示
+自动和强制 leaf 共用此布局：读取先验证 bool／枚举，再复制有效成员；非法对象表示
 不会进入 C++ 对象。无 padding、无 transient 的布局仍可合并为一次 `memcpy`。
 包含 union 的自动对象布局无效，必须使用能表达活动分支的自定义 codec。
 
-自动原子类型可以用 `transient` 排除仅供运行时使用的成员：
+自动叶节点类型可以用 `transient` 排除仅供运行时使用的成员：
 
 ```cpp
-struct [[=srl::tag::atomic{}]] CachedValue {
+struct [[=srl::tag::leaf{}]] CachedValue {
     std::uint32_t value{};
 
     [[=srl::tag::transient{}]]
@@ -400,8 +400,8 @@ struct [[=srl::tag::atomic{}]] CachedValue {
 存在 `transient` 成员时，编码、解码和固定大小计算会完全跳过该成员；解码时它保留目标
 对象原有的值。若类型设置了 `allow_padding = true` 或具有独一对象表示，且对象布局
 不存在 transient 与其它子对象的重叠，schema 会计算排除 transient 后的 wire 位置，
-codec 按同一份标量布局展开复制并将 padding 写零；无法安全形成布局时 schema 无效。`transient` 只能单独标记自动原子类型的
-非静态数据成员，不能用于普通 record，也不能和 `field`、字段级 `atomic`、`container` 或
+codec 按同一份标量布局展开复制并将 padding 写零；无法安全形成布局时 schema 无效。`transient` 只能单独标记自动叶节点类型的
+非静态数据成员，不能用于普通 record，也不能和 `field`、字段级 `leaf`、`container` 或
 转换标记组合。
 
 自动生成支持 public、protected 和 private 的非虚直接基类；成员不能是引用、bit-field 或
@@ -409,11 +409,11 @@ codec 按同一份标量布局展开复制并将 padding 写零；无法安全�
 写入 wire。
 
 指针检查由独立的 `bypass_pointer_check` tag 控制。标在类型声明上时，对该类型的所有直接
-基类和成员生效；标在单独成员或基类上时，只强制包含该实体。该规则同时适用于 `atomic`
+基类和成员生效；标在单独成员或基类上时，只强制包含该实体。该规则同时适用于 `leaf`
 和 `auto_seq`：`auto_seq` 中被放行的指针实体会直接复制该实体的对象表示。
 
 ```cpp
-struct [[=srl::tag::atomic{}]]
+struct [[=srl::tag::leaf{}]]
        [[=srl::tag::bypass_pointer_check{}]] ProcessLocalHandle {
     void *value{};
 };
@@ -427,32 +427,32 @@ struct [[=srl::tag::auto_seq{}]] State {
 该 tag 不提供地址修复、跨进程有效性或可移植性。库在编译期要求目标使用 8-bit byte 和
 小端序，不提供大端兼容或运行时字节序转换。
 
-无法修改声明的第三方平凡类型可以在字段上附加 `atomic`，强制该字段直接复制对象表示：
+无法修改声明的第三方平凡类型可以在字段上附加 `leaf`，强制该字段直接复制对象表示：
 
 ```cpp
 struct Record {
     [[=srl::tag::field{.id = 1}]]
-    [[=srl::tag::atomic{}]]
+    [[=srl::tag::leaf{}]]
     third_party::trivial_value value;
 };
 ```
 
-字段级强制原子要求类型 trivially copyable，并且默认要求独一对象表示；设置
+字段级强制叶节点要求类型 trivially copyable，并且默认要求独一对象表示；设置
 `.allow_padding = true` 时 padding 占据格式空间但写零。需要包含指针表示时，另加
 `[[=srl::tag::bypass_pointer_check{}]]`。
 
-整数、浮点、枚举和 `bool` 是内建原子类型。`std::string` 始终走字符容器路径，不提供
-`atomic_codec<std::string>`。其它固定尺寸的特殊类型可显式特化 `srl::atomic_codec<T>`。
+整数、浮点、枚举和 `bool` 是内建叶节点类型。`std::string` 始终走字符容器路径，不提供
+`leaf_codec<std::string>`。其它固定尺寸的特殊类型可显式特化 `srl::leaf_codec<T>`。
 自定义 codec 必须提供可在编译期求值的 `fixed_size`，并直接对调用方提供的
 `std::span<std::byte, fixed_size>` 和 `std::span<const std::byte, fixed_size>` 编解码，不创建
 中间 payload buffer。变长类型应使用容器或 record 表示。自定义类型仍应在声明处标记
-`[[=srl::tag::atomic{}]]`。
+`[[=srl::tag::leaf{}]]`。
 
 ## 内存格式
 
 线格式直接使用受支持小端目标的对象表示。header 和 mapping 是固定布局的
-trivially copyable 类型，完整复制其对象表示；atomic content 使用编译期成员布局，
-padding 写零，transient 不写入目标。因此只有显式允许 padding，或类型具有独一对象表示时，复合原子类型才会
+trivially copyable 类型，完整复制其对象表示；leaf content 使用编译期成员布局，
+padding 写零，transient 不写入目标。因此只有显式允许 padding，或类型具有独一对象表示时，复合叶节点类型才会
 把对象表示复制到文件；结构化的逐实体编码由 record/`auto_seq` 承担。
 
 ```cpp
@@ -487,7 +487,7 @@ struct entry_mapping {
 
 | 值 | 类型 | 内容 |
 | --- | --- | --- |
-| 1 | atomic | 无 mapping，原子 payload |
+| 1 | leaf | 无 mapping，叶节点 payload |
 | 2 | stream | 无 mapping，按 schema 顺序拼接 payload |
 | 3 | record | 按字段 ID 索引 |
 | 4 | sequence | 元素 ID 从零连续递增，每个元素一个 mapping |
@@ -512,8 +512,8 @@ wire 契约由编译期元数据生成：整数按符号和宽度区分，浮点
 大小计算为 `std::dynamic_extent` 保留全一哨兵值。静态 mapping 数量超限使 schema 无效，
 动态超限返回 `too_many_mappings`；尺寸溢出返回 `entry_too_large`。
 
-非原子字段的 content 是一个完整嵌套 entry；原子字段的 content 是直接二进制 payload。
-根原子对象使用 mapping 数量为零的 entry，整个 content 都是原子 payload。
+非叶节点字段的 content 是一个完整嵌套 entry；叶节点字段的 content 是直接二进制 payload。
+根叶节点对象使用 mapping 数量为零的 entry，整个 content 都是叶节点 payload。
 
 ## 磁盘块
 
@@ -563,7 +563,7 @@ if (auto status = srl::deserialize(block->span(), restored, context); status) {
 ## 编译期 Schema 树
 
 `schema<T>::tree` 是统一的编译期结构描述。`root` 表示根节点，`value` 表示实际值节点；
-atomic 根节点额外包含 entry header，而嵌套 atomic 值仅包含 payload。通过 `node(index)`、
+leaf 根节点额外包含 entry header，而嵌套 leaf 值仅包含 payload。通过 `node(index)`、
 `children(index)` 和 `child(index, ordinal)` 查询节点及子节点，索引始终属于同一棵树。
 
 ```cpp
@@ -578,27 +578,27 @@ constexpr auto encoded_size = description::node(description::root).encode_extent
 
 节点包含 wire 分类、字段/基类反射信息、内存与存储类型、转换选项、容器槽位与数量约束。
 record 子节点按字段 ID 排序，stream 子节点按加载顺序排列；容器只描述 element 或 key/value
-槽位，不按元素数量展开。同一类型在不同字段的 stream、forced atomic、转换及重复元素策略
-分别记录在各自节点中。atomic 的对象表示是一个叶节点，其内部成员不是独立 wire 子节点。
+槽位，不按元素数量展开。同一类型在不同字段的 stream、forced leaf、转换及重复元素策略
+分别记录在各自节点中。leaf 的对象表示是一个叶节点，其内部成员不是独立 wire 子节点。
 
 `encode_extent` 递归计算编码长度，无法静态确定时为 `std::dynamic_extent`。
-`decode_extent` 表示解码可要求的精确 payload 长度：atomic/forced 为固定尺寸，复合节点保留
+`decode_extent` 表示解码可要求的精确 payload 长度：leaf/forced 为固定尺寸，复合节点保留
 动态尺寸，因为目标类型的编码长度并不限定所有合法输入布局。定长内部编码和解码接口要求
 静态 extent 的 span；公共字节输入在边界检查长度后再转换，不截断过长的 payload。
 
 树构建、校验和尺寸计算使用非模板 `consteval` 函数与普通循环，结果固化为静态数组。
 模板仅连接 codec/容器适配接口、缓存根类型描述以及生成实际操作对象的代码。
 schema 不保存对象、转换结果或运行期 handler；这些状态仍由编码计划及上下文持有。
-容器元素是否需要编码缓存也由该树推导：atomic 以及不含转换或容器的定长 record/stream
+容器元素是否需要编码缓存也由该树推导：leaf 以及不含转换或容器的定长 record/stream
 使用空槽位计划，不为每个元素分配缓存；转换结果和动态布局仍在准备阶段缓存，避免重复计算。
 
 ## Schema 可视化
 
 `schema_string<T>()` 在编译期遍历上述 schema 树，并返回具有静态存储期的
-`std::string_view`。输出包含 record 字段 ID、转换后的存储类型、atomic 固定大小、容器
-元素布局和固定元素数量；无效 schema 会在编译期被拒绝。原子节点区分
-`primitive-atomic`、`codec-atomic` 和 `object-atomic`。进入原子模式的直接成员或基类使用
-`[atomic-root member]` / `[atomic-root base]`。对象原子布局使用 `[wire +偏移]` 展示
+`std::string_view`。输出包含 record 字段 ID、转换后的存储类型、leaf 固定大小、容器
+元素布局和固定元素数量；无效 schema 会在编译期被拒绝。叶节点节点区分
+`primitive-leaf`、`codec-leaf` 和 `object-leaf`。进入叶节点模式的直接成员或基类使用
+`[leaf-root member]` / `[leaf-root base]`。对象叶节点布局使用 `[wire +偏移]` 展示
 实际标量的 wire 位置、对象内偏移及大小，与编解码和输入校验使用相同的布局元数据。
 
 ```cpp
@@ -618,25 +618,25 @@ constexpr auto schema = srl::schema_string<^^ProfileAlias>();
 ```text
 record Profile {
   [1] person: record Person {
-    [1] [atomic-root member] age: primitive-atomic int (size: 4 bytes)
-    [2] [atomic-root member] score: primitive-atomic double (size: 8 bytes)
+    [1] [leaf-root member] age: primitive-leaf int (size: 4 bytes)
+    [2] [leaf-root member] score: primitive-leaf double (size: 8 bytes)
   }
   [2] name: container std::string (count: dynamic) {
-    element: primitive-atomic char (size: 1 byte)
+    element: primitive-leaf char (size: 1 byte)
   }
-  [3] [atomic-root member] active: primitive-atomic bool (size: 1 byte)
-  [4] [atomic-root member] state: primitive-atomic activity (size: 1 byte)
+  [3] [leaf-root member] active: primitive-leaf bool (size: 1 byte)
+  [4] [leaf-root member] state: primitive-leaf activity (size: 1 byte)
   [5] position: record Vec2 {
-    [0] [atomic-root member] x: primitive-atomic float (size: 4 bytes)
-    [1] [atomic-root member] y: primitive-atomic float (size: 4 bytes)
+    [0] [leaf-root member] x: primitive-leaf float (size: 4 bytes)
+    [1] [leaf-root member] y: primitive-leaf float (size: 4 bytes)
   }
 }
 ```
 
-对象表示原子类型会进一步展示直接参与原子模式的成员和基类：
+对象表示叶节点类型会进一步展示直接参与叶节点模式的成员和基类：
 
 ```text
-object-atomic UniqueAtomic (size: 8 bytes, representation: direct) {
+object-leaf UniqueLeaf (size: 8 bytes, representation: direct) {
   [wire +0] first: unsigned int (size: 4, object +0)
   [wire +4] second: unsigned int (size: 4, object +4)
 }

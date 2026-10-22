@@ -36,7 +36,7 @@ namespace srl {
     }
 
     template<typename T>
-    struct atomic_codec;
+    struct leaf_codec;
 
     template<typename T>
     concept primitive = std::integral<T>
@@ -44,7 +44,7 @@ namespace srl {
                         || (std::floating_point<T> && (sizeof(T) == 4 || sizeof(T) == 8));
 
     template<primitive T>
-    struct atomic_codec<T> {
+    struct leaf_codec<T> {
         using wire_type = decltype([] {
             if constexpr (std::is_enum_v<T>) {
                 return std::type_identity<std::underlying_type_t<T>>{};
@@ -93,18 +93,18 @@ namespace srl {
     };
 
     template<typename T>
-    concept atomic_serializable = requires {
+    concept leaf_serializable = requires {
         typename std::integral_constant<
             std::size_t,
-            atomic_codec<codec_value_type<T>>::fixed_size>;
-        requires (atomic_codec<codec_value_type<T>>::fixed_size != std::dynamic_extent);
+            leaf_codec<codec_value_type<T>>::fixed_size>;
+        requires (leaf_codec<codec_value_type<T>>::fixed_size != std::dynamic_extent);
         static_cast<error (*)(
             const codec_value_type<T> &,
-            std::span<std::byte, atomic_codec<codec_value_type<T>>::fixed_size>)>(
-            &atomic_codec<codec_value_type<T>>::encode);
+            std::span<std::byte, leaf_codec<codec_value_type<T>>::fixed_size>)>(
+            &leaf_codec<codec_value_type<T>>::encode);
         static_cast<error (*)(
-            std::span<const std::byte, atomic_codec<codec_value_type<T>>::fixed_size>,
+            std::span<const std::byte, leaf_codec<codec_value_type<T>>::fixed_size>,
             codec_value_type<T> &)>(
-            &atomic_codec<codec_value_type<T>>::decode);
+            &leaf_codec<codec_value_type<T>>::decode);
     };
 }

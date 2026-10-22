@@ -286,7 +286,7 @@ namespace srl_test {
         unsigned int rejected_value_15{};
         require_error(srl::deserialize(int_bytes.span(), rejected_value_15, default_context),
                       srl::error_code::type_mismatch,
-                      "atomic root type mismatch was accepted");
+                      "leaf root type mismatch was accepted");
 
         srl::byte_buffer map_bytes{};
         const auto map_bytes_status = srl::serialize(std::map<int, int>{{1, 2}, {3, 4}}, map_bytes, default_context);

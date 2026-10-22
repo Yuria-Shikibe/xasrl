@@ -11,29 +11,29 @@
 
 namespace srl {
     template<typename T>
-    consteval bool atomic_uses_direct_object_representation() {
+    consteval bool leaf_uses_direct_object_representation() {
         using value_type = codec_value_type<T>;
-        if constexpr (!atomic_serializable<value_type>) {
+        if constexpr (!leaf_serializable<value_type>) {
             return false;
-        } else if constexpr (requires {atomic_codec<value_type>::uses_direct_object_representation;}) {
-            return atomic_codec<value_type>::uses_direct_object_representation;
+        } else if constexpr (requires {leaf_codec<value_type>::uses_direct_object_representation;}) {
+            return leaf_codec<value_type>::uses_direct_object_representation;
         } else {
             return false;
         }
     }
 
     template<typename T>
-        requires (detail::auto_atomic_supported<T>())
-    struct atomic_codec<T> {
+        requires (detail::auto_leaf_supported<T>())
+    struct leaf_codec<T> {
         static constexpr bool uses_direct_object_representation =
-            detail::atomic_uses_direct_object_representation_impl<T>();
+            detail::leaf_uses_direct_object_representation_impl<T>();
         static constexpr bool uses_segmented_object_representation =
-            detail::atomic_uses_segmented_object_representation_impl<T>();
+            detail::leaf_uses_segmented_object_representation_impl<T>();
         static constexpr auto layout = detail::make_object_layout<T, uses_segmented_object_representation>();
 
         static constexpr auto copy_ranges = [] consteval {
             if constexpr (uses_segmented_object_representation) {
-                return detail::atomic_copy_ranges<T>();
+                return detail::leaf_copy_ranges<T>();
             } else {
                 return std::array<detail::byte_range, 0>{};
             }

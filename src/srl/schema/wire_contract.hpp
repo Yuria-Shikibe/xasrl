@@ -34,7 +34,7 @@ namespace srl::detail {
         return std::meta::extract<type_hash_type>(std::meta::substitute(^^scalar_wire_id, {type}));
     }
 
-    consteval type_hash_type atomic_wire_type(const schema_node &node) {
+    consteval type_hash_type leaf_wire_type(const schema_node &node) {
         auto hash = hash_integer(scalar_wire_type(node.type), node.encode_extent);
         for (const auto field: node.object.fields()) {
             hash = hash_integer(hash, scalar_wire_type(field.type));

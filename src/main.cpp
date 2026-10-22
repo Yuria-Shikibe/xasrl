@@ -8,7 +8,7 @@
 #include "srl/schema_visualization.hpp"
 
 template <typename T>
-struct [[=srl::tag::atomic{}]] vec2 {
+struct [[=srl::tag::leaf{}]] vec2 {
     T x, y;
 };
 

@@ -18,7 +18,7 @@ namespace srl {
     using type_hash_type = std::uint32_t;
 
     enum class entry_kind : std::uint8_t {
-        atomic = 1,
+        leaf = 1,
         stream = 2,
         record = 3,
         sequence = 4,

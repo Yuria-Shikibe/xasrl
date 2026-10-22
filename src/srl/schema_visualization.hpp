@@ -37,18 +37,18 @@ namespace srl::detail {
         }
     }
 
-    // Atomic object members explain the representation; they are not wire children.
-    consteval void append_atomic_schema(std::string &out, const schema_node &node,
-                                       std::meta::info display_type, std::size_t depth, bool atomic_root) {
+    // Leaf object members explain the representation; they are not wire children.
+    consteval void append_leaf_schema(std::string &out, const schema_node &node,
+                                       std::meta::info display_type, std::size_t depth, bool leaf_root) {
         const auto type = node.type;
-        const bool object = node.representation != atomic_representation::codec;
-        const bool forced = node.representation == atomic_representation::forced;
+        const bool object = node.representation != leaf_representation::codec;
+        const bool forced = node.representation == leaf_representation::forced;
         if (forced) {
-            out.append("object-atomic ");
+            out.append("object-leaf ");
         } else if (std::meta::is_arithmetic_type(type) || std::meta::is_enum_type(type)) {
-            out.append("primitive-atom ");
+            out.append("primitive-leaf ");
         } else {
-            out.append(object ? "object-atom " : "codec-atom ");
+            out.append(object ? "object-leaf " : "codec-leaf ");
         }
         out.append(schema_type_name(display_type));
         out.append(" (size: ");
@@ -56,7 +56,7 @@ namespace srl::detail {
         out.append(node.encode_extent == 1 ? " byte" : " bytes");
         if (object) {
             out.append(", representation: ");
-            out.append(forced ? "forced-direct" : node.representation == atomic_representation::direct ? "direct" : "segmented");
+            out.append(forced ? "forced-direct" : node.representation == leaf_representation::direct ? "direct" : "segmented");
         }
         out.push_back(')');
         if (!object || (!std::meta::is_class_type(type) && !std::meta::is_union_type(type))) {
@@ -83,10 +83,10 @@ namespace srl::detail {
     }
 
     consteval void append_schema_node(std::string &out, const schema_tree &tree, std::size_t index,
-                                     std::meta::info display_type, std::size_t depth, bool atomic_root = true) {
+                                     std::meta::info display_type, std::size_t depth, bool leaf_root = true) {
         const auto &node = tree.node(index);
-        if (node.kind == schema_kind::atomic) {
-            append_atomic_schema(out, node, display_type, depth, atomic_root);
+        if (node.kind == schema_kind::leaf) {
+            append_leaf_schema(out, node, display_type, depth, leaf_root);
             return;
         }
         const bool container = node.kind == schema_kind::container;
@@ -119,8 +119,8 @@ namespace srl::detail {
                 }
                 ++position;
                 out.append("] ");
-                if (child.kind == schema_kind::atomic) {
-                    out.append(child.role == schema_role::base ? "[atom-root base] " : "[atom-root memb] ");
+                if (child.kind == schema_kind::leaf) {
+                    out.append(child.role == schema_role::base ? "[leaf-root base] " : "[leaf-root memb] ");
                 }
                 append_schema_entity_name(out, child.entity);
                 out.append(": ");

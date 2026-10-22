@@ -130,7 +130,7 @@ namespace srl {
         // [[=srl::tag::fallback{srl::defaults::value<42>{}}]]
         // One policy per annotation; field-level validation rejects duplicates.
         // Applies to the memory type before any storage conversion. Streams and
-        // members inside atomic objects have no independently absent IDs and
+        // members inside leaf objects have no independently absent IDs and
         // reject this tag.
         template<detail::default_policy Policy = defaults::initialized>
         struct fallback {
@@ -153,8 +153,7 @@ namespace srl {
             constexpr bool operator==(const field &) const noexcept = default;
         };
 
-        //TODO rename it
-        struct atomic {
+        struct leaf {
             bool allow_padding{false};
         };
 

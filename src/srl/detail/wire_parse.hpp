@@ -88,7 +88,7 @@ namespace srl::detail {
         const auto count = head.mapping_count();
         const auto kind = head.kind();
         const auto classification_valid =
-                ((kind == entry_kind::atomic || kind == entry_kind::stream) && count == 0)
+                ((kind == entry_kind::leaf || kind == entry_kind::stream) && count == 0)
                 || kind == entry_kind::record
                 || kind == entry_kind::sequence
                 || kind == entry_kind::map;

@@ -47,8 +47,8 @@ namespace stream_tests {
     struct [[=srl::tag::auto_stream{}]] ContainerConflict {
         [[=srl::tag::auto_stream{}]] std::vector<int> value;
     };
-    struct [[=srl::tag::auto_stream{}]] AtomicConflict {
-        [[=srl::tag::auto_stream{}]] UniqueAtomic value;
+    struct [[=srl::tag::auto_stream{}]] LeafConflict {
+        [[=srl::tag::auto_stream{}]] UniqueLeaf value;
     };
     struct [[=srl::tag::auto_stream{}]] [[=srl::tag::auto_seq{}]] Modes {};
     struct [[=srl::tag::auto_stream{}]] [[=srl::tag::auto_stream{}]] Duplicate {};
@@ -62,17 +62,17 @@ namespace stream_tests {
     struct [[=srl::tag::auto_stream{}]] TransientConflict {
         [[=srl::tag::auto_stream{}]] [[=srl::tag::transient{}]] Plain value;
     };
-    struct [[=srl::tag::auto_stream{}]] FieldAtomicConflict {
-        [[=srl::tag::auto_stream{}]] [[=srl::tag::atomic{}]] Sequence value;
+    struct [[=srl::tag::auto_stream{}]] FieldLeafConflict {
+        [[=srl::tag::auto_stream{}]] [[=srl::tag::leaf{}]] Sequence value;
     };
     struct [[=srl::tag::auto_stream{}]] RepeatedField {
         [[=srl::tag::auto_stream{}]] [[=srl::tag::auto_stream{}]] Plain value;
     };
-    struct [[=srl::tag::atomic{}]] AtomicOwner {
+    struct [[=srl::tag::leaf{}]] LeafOwner {
         [[=srl::tag::auto_stream{}]] std::uint32_t value;
     };
-    struct [[=srl::tag::auto_stream{}]] ForcedAtomic {
-        [[=srl::tag::atomic{.allow_padding = true}]] Sequence value;
+    struct [[=srl::tag::auto_stream{}]] ForcedLeaf {
+        [[=srl::tag::leaf{.allow_padding = true}]] Sequence value;
         [[=srl::tag::bypass_pointer_check{}]] int *pointer{};
     };
     struct DuplicateRecord {
@@ -89,14 +89,14 @@ namespace stream_tests {
     static_assert(srl::schema_valid<Converted>());
     static_assert(srl::serialized_field_count<Numbers>() == 2);
     static_assert(!srl::schema_valid<Conflict>() && !srl::schema_valid<ContainerConflict>());
-    static_assert(!srl::schema_valid<AtomicConflict>() && !srl::schema_valid<Modes>());
+    static_assert(!srl::schema_valid<LeafConflict>() && !srl::schema_valid<Modes>());
     static_assert(!srl::schema_valid<Duplicate>() && !srl::schema_valid<Pointer>());
     static_assert(!srl::schema_valid<Reference>() && !srl::schema_valid<Bits>());
     static_assert(!srl::schema_valid<Virtual>() && !srl::schema_valid<Missing>());
     static_assert(!srl::schema_valid<Recursive>() && !srl::schema_valid<MissingField>());
-    static_assert(!srl::schema_valid<TransientConflict>() && !srl::schema_valid<FieldAtomicConflict>());
-    static_assert(!srl::schema_valid<RepeatedField>() && !srl::schema_valid<AtomicOwner>());
-    static_assert(srl::schema_valid<ForcedAtomic>() && srl::schema_valid<OverrideIds>());
+    static_assert(!srl::schema_valid<TransientConflict>() && !srl::schema_valid<FieldLeafConflict>());
+    static_assert(!srl::schema_valid<RepeatedField>() && !srl::schema_valid<LeafOwner>());
+    static_assert(srl::schema_valid<ForcedLeaf>() && srl::schema_valid<OverrideIds>());
     static_assert(srl::schema_string<Nested>().contains("stream "));
     static_assert(srl::schema_string<Numbers>().contains("[position 1]"));
 
@@ -188,9 +188,9 @@ namespace stream_tests {
     TEST(AutoStream, FieldModesAndIgnoredIds) {
         int marker{};
         srl::byte_buffer bytes{};
-        const auto bytes_status = srl::serialize(ForcedAtomic{{12, 34}, &marker}, bytes, default_context);
+        const auto bytes_status = srl::serialize(ForcedLeaf{{12, 34}, &marker}, bytes, default_context);
         ASSERT_TRUE(!bytes_status);
-        ForcedAtomic result{};
+        ForcedLeaf result{};
         const auto result_status = srl::deserialize(bytes.span(), result, default_context);
         ASSERT_TRUE(!result_status);
         EXPECT_EQ(result.value.second, 34);

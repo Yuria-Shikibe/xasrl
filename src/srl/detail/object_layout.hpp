@@ -78,7 +78,7 @@ namespace srl::detail {
         for (auto &field: fields) {
             if constexpr (Segmented) {
                 szt wire_offset{};
-                for (const auto range: atomic_copy_ranges<T>()) {
+                for (const auto range: leaf_copy_ranges<T>()) {
                     if (field.object_offset >= range.offset
                         && field.object_offset + field.size <= range.offset + range.size) {
                         field.wire_offset = wire_offset + field.object_offset - range.offset;

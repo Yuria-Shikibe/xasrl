@@ -48,21 +48,21 @@ namespace serialization_api_tests {
         int value{};
     };
 
-    struct [[=srl::tag::atomic{}]] FallibleAtomic {
+    struct [[=srl::tag::leaf{}]] FallibleLeaf {
         int value{};
     };
 }
 
 namespace srl {
     template<>
-    struct atomic_codec<serialization_api_tests::FallibleAtomic> {
+    struct leaf_codec<serialization_api_tests::FallibleLeaf> {
         static constexpr szt fixed_size = sizeof(int);
         static inline bool fail_encode{};
         static inline bool throw_encode{};
         static inline bool fail_decode{};
         static inline bool throw_decode{};
 
-        static error encode(const serialization_api_tests::FallibleAtomic &value,
+        static error encode(const serialization_api_tests::FallibleLeaf &value,
                             std::span<std::byte, fixed_size> bytes) {
             detail::write_trivial(bytes, value.value);
             if (throw_encode) { throw std::runtime_error("encode failed"); }
@@ -70,7 +70,7 @@ namespace srl {
         }
 
         static error decode(std::span<const std::byte, fixed_size> bytes,
-                            serialization_api_tests::FallibleAtomic &out) {
+                            serialization_api_tests::FallibleLeaf &out) {
             out.value = detail::read_trivial<int>(bytes);
             if (throw_decode) { throw std::runtime_error("decode failed"); }
             return fail_decode ? detail::fail(error_code::invalid_reference) : error{};
@@ -204,29 +204,29 @@ namespace serialization_api_tests {
     }
 
     TEST(SerializationApi, FailureAndExceptionContracts) {
-        using codec = srl::atomic_codec<FallibleAtomic>;
+        using codec = srl::leaf_codec<FallibleLeaf>;
         srl::byte_buffer bytes;
         bytes.resize(100, std::byte{0x5a});
         codec::fail_encode = true;
-        EXPECT_EQ(srl::serialize(FallibleAtomic{42}, bytes, context).code,
+        EXPECT_EQ(srl::serialize(FallibleLeaf{42}, bytes, context).code,
                   srl::error_code::invalid_reference);
         codec::fail_encode = false;
-        EXPECT_EQ(bytes.size(), srl::serialized_size<FallibleAtomic>());
+        EXPECT_EQ(bytes.size(), srl::serialized_size<FallibleLeaf>());
         codec::throw_encode = true;
-        EXPECT_THROW((void)srl::serialize(FallibleAtomic{43}, bytes, context), std::runtime_error);
+        EXPECT_THROW((void)srl::serialize(FallibleLeaf{43}, bytes, context), std::runtime_error);
         codec::throw_encode = false;
-        ASSERT_FALSE(srl::serialize(FallibleAtomic{44}, bytes, context));
+        ASSERT_FALSE(srl::serialize(FallibleLeaf{44}, bytes, context));
 
-        std::array<std::byte, srl::serialized_size<FallibleAtomic>()> fixed{};
+        std::array<std::byte, srl::serialized_size<FallibleLeaf>()> fixed{};
         codec::fail_encode = true;
-        EXPECT_EQ(srl::serialize(FallibleAtomic{45}, std::span{fixed}, context).code,
+        EXPECT_EQ(srl::serialize(FallibleLeaf{45}, std::span{fixed}, context).code,
                   srl::error_code::invalid_reference);
         codec::fail_encode = false;
         codec::throw_encode = true;
-        EXPECT_THROW((void)srl::serialize(FallibleAtomic{46}, std::span{fixed}, context), std::runtime_error);
+        EXPECT_THROW((void)srl::serialize(FallibleLeaf{46}, std::span{fixed}, context), std::runtime_error);
         codec::throw_encode = false;
 
-        FallibleAtomic out{99};
+        FallibleLeaf out{99};
         codec::fail_decode = true;
         EXPECT_EQ(srl::deserialize(bytes.span(), out, context).code, srl::error_code::invalid_reference);
         codec::fail_decode = false;

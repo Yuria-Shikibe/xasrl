@@ -10,11 +10,11 @@
 #include "../detail/object_layout.hpp"
 
 namespace srl {
-    enum class schema_kind : std::uint8_t { root, atomic, record, stream, container };
+    enum class schema_kind : std::uint8_t { root, leaf, record, stream, container };
 
     enum class schema_role : std::uint8_t { value, member, base, element, key, mapped };
 
-    enum class atomic_representation : std::uint8_t { codec, direct, segmented, forced };
+    enum class leaf_representation : std::uint8_t { codec, direct, segmented, forced };
 
     enum class schema_duplicates : std::uint8_t { inherit, deduplicate, reject };
 
@@ -46,8 +46,8 @@ namespace srl {
         std::size_t element_count = std::dynamic_extent;
         szt header_size{};
         std::uint8_t mapping_group_size{};
-        entry_kind wire_kind = entry_kind::atomic;
-        atomic_representation representation = atomic_representation::codec;
+        entry_kind wire_kind = entry_kind::leaf;
+        leaf_representation representation = leaf_representation::codec;
         detail::object_layout object{};
         conversion_tag conversion{};
         std::meta::info fallback_type{};
