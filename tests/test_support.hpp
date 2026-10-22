@@ -24,6 +24,11 @@ namespace srl_test {
         require(!result && result.error().code == expected, description);
     }
 
+    inline void require_error(srl::error result, srl::error_code expected,
+                              std::string_view description) {
+        require(result.code == expected, description);
+    }
+
     inline void set_u32(srl::byte_buffer &buffer, std::size_t offset, std::uint32_t value) {
         srl::detail::write_trivial(buffer.span().subspan(offset), value);
     }
@@ -42,5 +47,13 @@ namespace srl_test {
         const auto character = static_cast<char>(std::to_integer<unsigned char>(value));
         file.write(&character, 1);
         require(static_cast<bool>(file), "failed to mutate test block");
+    }
+
+    inline void set_u64(srl::byte_buffer &buffer, std::size_t offset, srl::szt value) {
+        srl::detail::write_trivial(buffer.span().subspan(offset), value);
+    }
+
+    [[nodiscard]] inline srl::szt get_u64(const srl::byte_buffer &buffer, std::size_t offset) {
+        return srl::detail::read_trivial<srl::szt>(buffer.span().subspan(offset));
     }
 }

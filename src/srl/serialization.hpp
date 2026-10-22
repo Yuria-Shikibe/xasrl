@@ -9,12 +9,28 @@
 #include <type_traits>
 
 #include "detail/codec.hpp"
+#include "transaction.hpp"
 
 namespace srl {
     template<serializable T>
-    [[nodiscard]] std::expected<std::size_t, error> serialized_size(
+        requires (schema<T>::node(schema<T>::root).encode_extent != std::dynamic_extent)
+    [[nodiscard]] consteval szt serialized_size() noexcept {
+        static_assert(schema_valid<T>(), schema_diagnostic<T>());
+        return schema<T>::node(schema<T>::root).encode_extent;
+    }
+
+    template<serializable T>
+        requires (schema<T>::node(schema<T>::root).encode_extent != std::dynamic_extent)
+    [[nodiscard]] constexpr szt serialized_size(
+        const T &, const serialization_context &) noexcept {
+        return serialized_size<T>();
+    }
+
+    template<serializable T>
+        requires (schema<T>::node(schema<T>::root).encode_extent == std::dynamic_extent)
+    [[nodiscard]] std::expected<szt, error> serialized_size(
         const T &value, const serialization_context &context) {
-        static_assert(schema_valid<T>(), "invalid serialization schema");
+        static_assert(schema_valid<T>(), schema_diagnostic<T>());
         typename detail::root_codec<T>::encode_plan plan;
         if (auto status = plan.prepare(value, context); status) {
             return std::unexpected{status};
@@ -22,89 +38,90 @@ namespace srl {
         return plan.size;
     }
 
-    template<serializable T>
-    [[nodiscard]] error pack_into(
-        std::span<std::byte> destination,
+    template<serializable T, std::size_t Extent>
+        requires (Extent == std::dynamic_extent
+                  || schema<T>::node(schema<T>::root).encode_extent == std::dynamic_extent
+                  || Extent == schema<T>::node(schema<T>::root).encode_extent)
+    [[nodiscard]] error serialize(
         const T &value,
+        std::span<std::byte, Extent> destination,
         const serialization_context &context) {
-        static_assert(schema_valid<T>(), "invalid serialization schema");
+        static_assert(schema_valid<T>(), schema_diagnostic<T>());
         typename detail::root_codec<T>::encode_plan plan;
         if (auto status = plan.prepare(value, context); status) {
             return status;
         }
-        if (destination.size() != plan.size) {
-            return detail::fail(error_code::invalid_entry_size);
+        if constexpr (Extent == std::dynamic_extent || plan.static_extent == std::dynamic_extent) {
+            if (destination.size() != plan.size) {
+                return detail::fail(error_code::invalid_entry_size);
+            }
         }
         return plan.encode(detail::payload_span<plan.static_extent>(destination, 0, plan.size), value);
     }
 
     template<serializable T>
-    [[nodiscard]] std::expected<byte_buffer, error> pack(
-        const T &value, const serialization_context &context) {
-        static_assert(schema_valid<T>(), "invalid serialization schema");
+    [[nodiscard]] error serialize(
+        const T &value, byte_buffer &destination, const serialization_context &context) {
+        static_assert(schema_valid<T>(), schema_diagnostic<T>());
         typename detail::root_codec<T>::encode_plan plan;
         if (auto status = plan.prepare(value, context); status) {
-            return std::unexpected{status};
+            return status;
         }
-        byte_buffer result;
-        result.resize(plan.size);
-        if (auto status = plan.encode(detail::payload_span<plan.static_extent>(result.span(), 0, plan.size), value); status) {
-            return std::unexpected{status};
+        if (plan.size > destination.max_size()) {
+            return detail::fail(error_code::entry_too_large);
         }
-        return result;
+        destination.resize(static_cast<std::size_t>(plan.size));
+        return plan.encode(detail::payload_span<plan.static_extent>(destination.span(), 0, plan.size), value);
     }
 
-    template<serializable T>
-    [[nodiscard]] error decode_root(
-        std::span<const std::byte> bytes,
+    template<serializable T, typename Byte, std::size_t Extent>
+        requires (std::same_as<Byte, std::byte> || std::same_as<Byte, const std::byte>)
+                 && (!std::is_const_v<T> && !std::is_volatile_v<T>)
+                 && transactional<codec_value_type<T>>
+    [[nodiscard]] error deserialize(
+        std::span<Byte, Extent> bytes,
         T &out,
         const serialization_context &context) {
-        static_assert(schema_valid<T>(), "invalid serialization schema");
-        return detail::root_codec<T>::decode(bytes, out, context);
-    }
-
-    template<serializable T>
-        requires std::copy_constructible<codec_value_type<T>>
-                 && std::is_nothrow_swappable_v<codec_value_type<T>>
-    [[nodiscard]] error unpack(
-        std::span<const std::byte> bytes,
-        T &out,
-        const serialization_context &context) {
-        codec_value_type<T> temporary = out;
-        if (auto decoded = srl::decode_root(bytes, temporary, context); decoded) {
+        static_assert(schema_valid<T>(), schema_diagnostic<T>());
+        if (bytes.size() > context.config.limits.max_input_bytes) {
+            return detail::fail(error_code::resource_limit_exceeded);
+        }
+        auto entry = detail::parse_entry(bytes);
+        if (!entry) { return entry.error(); }
+        detail::decode_budget budget{context.config.limits};
+        auto temporary = transaction_traits<codec_value_type<T>>::clone(out);
+        if (auto decoded = detail::root_codec<T>::decode_entry(*entry, temporary, context, budget); decoded) {
             return decoded;
         }
-        std::ranges::swap(out, temporary);
+        transaction_traits<codec_value_type<T>>::commit(out, temporary);
         return {};
     }
 
-    template<typename T, std::size_t Size>
+    template<typename T, std::size_t Size, typename Byte, std::size_t Extent>
         requires serializable<T[Size]>
-                 && std::copy_constructible<T>
-                 && std::is_nothrow_swappable_v<T>
-    [[nodiscard]] error unpack(
-        std::span<const std::byte> bytes,
+                 && (std::same_as<Byte, std::byte> || std::same_as<Byte, const std::byte>)
+                 && (!std::is_const_v<T> && !std::is_volatile_v<T>)
+                 && transactional<T>
+    [[nodiscard]] error deserialize(
+        std::span<Byte, Extent> bytes,
         T (&out)[Size],
         const serialization_context &context) {
-        auto temporary = std::to_array(out);
-        if (auto decoded = srl::decode_root(bytes, temporary, context); decoded) {
+        static_assert(schema_valid<T[Size]>(), schema_diagnostic<T[Size]>());
+        if (bytes.size() > context.config.limits.max_input_bytes) {
+            return detail::fail(error_code::resource_limit_exceeded);
+        }
+        auto entry = detail::parse_entry(bytes);
+        if (!entry) { return entry.error(); }
+        detail::decode_budget budget{context.config.limits};
+        auto temporary = [&]<std::size_t... Indices>(std::index_sequence<Indices...>) {
+            return std::array<T, Size>{transaction_traits<T>::clone(out[Indices])...};
+        }(std::make_index_sequence<Size>{});
+        if (auto decoded = detail::root_codec<decltype(temporary)>::decode_entry(*entry, temporary, context, budget); decoded) {
             return decoded;
         }
         for (std::size_t index = 0; index != Size; ++index) {
-            std::ranges::swap(out[index], temporary[index]);
+            transaction_traits<T>::commit(out[index], temporary[index]);
         }
         return {};
-    }
-
-    template<typename T>
-        requires serializable<T> && std::default_initializable<codec_value_type<T>>
-    [[nodiscard]] std::expected<codec_value_type<T>, error> extract(
-        std::span<const std::byte> bytes,
-        const serialization_context &context) {
-        codec_value_type<T> result{};
-        if (auto decoded = decode_root(bytes, result, context); decoded) {
-            return std::unexpected{decoded};
-        }
-        return result;
     }
 }

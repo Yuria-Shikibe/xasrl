@@ -3,6 +3,8 @@
 #include <concepts>
 #include <cstddef>
 #include <meta>
+#include <string>
+#include <string_view>
 
 #include "schema/build.hpp"
 
@@ -56,11 +58,22 @@ namespace srl {
     }
 
     template<typename T>
+    [[nodiscard]] consteval std::string_view schema_diagnostic() {
+        constexpr auto issue = schema<T>::tree.issue;
+        std::string result(enum_name(issue.reason));
+        if constexpr (issue.entity != std::meta::info{}) {
+            result.append(": ");
+            result.append(std::meta::display_string_of(issue.entity));
+        }
+        return {std::define_static_string(result), result.size()};
+    }
+
+    template<typename T>
     concept schemaed = schema<T>::valid;
 
     template<typename T>
     consteval std::size_t serialized_field_count() {
-        static_assert(schema<T>::valid, "invalid serialization schema");
+        static_assert(schema<T>::valid, schema_diagnostic<T>());
         constexpr auto &node = schema<T>::node(schema<T>::value);
         if constexpr (node.kind == schema_kind::record || node.kind == schema_kind::stream) {
             return node.children_count;

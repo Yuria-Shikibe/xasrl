@@ -31,6 +31,7 @@ namespace srl {
             [[nodiscard]] bool empty() const noexcept { return bytes_.empty(); }
             [[nodiscard]] size_type size() const noexcept { return bytes_.size(); }
             [[nodiscard]] size_type capacity() const noexcept { return bytes_.capacity(); }
+            [[nodiscard]] size_type max_size() const noexcept { return bytes_.max_size(); }
             [[nodiscard]] value_type *data() noexcept { return bytes_.data(); }
             [[nodiscard]] const value_type *data() const noexcept { return bytes_.data(); }
             [[nodiscard]] std::span<std::byte> span() noexcept { return bytes_; }
@@ -65,4 +66,3 @@ namespace srl {
 
     using byte_buffer = storage::byte_buffer;
 }
-

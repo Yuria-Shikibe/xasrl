@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "wire.hpp"
+#include "limits.hpp"
 
 namespace srl {
     namespace detail {
@@ -78,6 +79,7 @@ namespace srl {
 
     struct srl_ctx_config {
         duplicate_policy duplicates{duplicate_policy::deduplicate};
+        decode_limits limits{};
     };
 
     class serialization_context {

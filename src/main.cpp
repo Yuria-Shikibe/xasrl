@@ -2,6 +2,7 @@
 #include <stdexcept>
 #include <string>
 #include <span>
+#include <vector>
 
 #include "srl/core.hpp"
 #include "srl/schema_visualization.hpp"
@@ -32,18 +33,20 @@ int main() {
 
     std::println("schema \n {}", srl::schema_string<PlayerProfile>());
 
-    const auto bytes = srl::pack(source, context);
-    if (!bytes) {
-        throw std::runtime_error(std::string{srl::message(bytes.error().code)});
+    srl::byte_buffer bytes{};
+    const auto bytes_status = srl::serialize(source, bytes, context);
+    if (bytes_status) {
+        throw std::runtime_error(std::string{srl::message(bytes_status.code)});
     }
 
-    const auto copy = srl::extract<PlayerProfile>(bytes->span(), context);
-    if (!copy) {
-        throw std::runtime_error(std::string{srl::message(copy.error().code)});
+    PlayerProfile copy{};
+    const auto copy_status = srl::deserialize(bytes.span(), copy, context);
+    if (copy_status) {
+        throw std::runtime_error(std::string{srl::message(copy_status.code)});
     }
 
     std::println("{} reached level {} ({} serialized bytes)",
-                 copy->name,
-                 copy->level,
-                 bytes->size());
+                 copy.name,
+                 copy.level,
+                 bytes.size());
 }

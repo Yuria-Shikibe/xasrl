@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -7,16 +8,48 @@
 #include <expected>
 #include <filesystem>
 #include <fstream>
+#include <istream>
 #include <limits>
+#include <ostream>
 #include <span>
 #include <system_error>
 
-#include "serialization.hpp"
+#include "detail/wire_parse.hpp"
+#include "storage/byte_buffer.hpp"
+#include "limits.hpp"
+#include "detail/staged_file.hpp"
 
 namespace srl {
     namespace detail {
+        constexpr std::size_t io_chunk_size = 1024 * 1024;
+        static_assert(io_chunk_size <= std::numeric_limits<std::streamsize>::max());
+
         [[nodiscard]] inline std::error_code current_io_error() noexcept {
             return {errno, std::generic_category()};
+        }
+
+        [[nodiscard]] inline error write_bytes(std::ostream &output, std::span<const std::byte> bytes) {
+            while (!bytes.empty()) {
+                const auto count = std::min(bytes.size(), io_chunk_size);
+                output.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(count));
+                if (!output) {
+                    return fail(error_code::io_write_failed, std::nullopt, 0, current_io_error());
+                }
+                bytes = bytes.subspan(count);
+            }
+            return {};
+        }
+
+        [[nodiscard]] inline error read_bytes(std::istream &input, std::span<std::byte> bytes) {
+            while (!bytes.empty()) {
+                const auto count = std::min(bytes.size(), io_chunk_size);
+                input.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(count));
+                if (!input || input.gcount() != static_cast<std::streamsize>(count)) {
+                    return fail(error_code::io_read_failed, std::nullopt, 0, current_io_error());
+                }
+                bytes = bytes.subspan(count);
+            }
+            return {};
         }
     }
 
@@ -27,10 +60,8 @@ namespace srl {
             return entry.error();
         }
 
-        std::ofstream output(path, std::ios::binary | std::ios::trunc);
-        if (!output.is_open()) {
-            return detail::fail(error_code::io_open_failed, 0, 0, detail::current_io_error());
-        }
+        auto output = detail::staged_file::create(path);
+        if (!output) { return output.error(); }
 
         constexpr storage_head head{
             .magic_number = detail::storage_magic,
@@ -40,55 +71,42 @@ namespace srl {
 
         std::array<std::byte, detail::storage_head_wire_size> header{};
         detail::write_trivial(std::span{header}, head);
-        output.write(reinterpret_cast<const char *>(header.data()),
-                     static_cast<std::streamsize>(header.size()));
-        output.write(reinterpret_cast<const char *>(entry_bytes.data()),
-                     static_cast<std::streamsize>(entry_bytes.size()));
-        if (!output) {
-            return detail::fail(error_code::io_write_failed, 0, 0, detail::current_io_error());
-        }
-        output.flush();
-        if (!output) {
-            return detail::fail(error_code::io_flush_failed, 0, 0, detail::current_io_error());
-        }
-        output.close();
-        if (output.fail()) {
-            return detail::fail(error_code::io_write_failed, 0, 0, detail::current_io_error());
-        }
-        return {};
+        if (auto status = output->write(header); status) { return status; }
+        if (auto status = output->write(entry_bytes); status) { return status; }
+        return std::move(*output).commit();
     }
 
     [[nodiscard]] inline std::expected<byte_buffer, error> read_block(
-        const std::filesystem::path &path) {
+        const std::filesystem::path &path, szt max_entry_bytes = decode_limits{}.max_input_bytes) {
         std::ifstream input(path, std::ios::binary | std::ios::ate);
         if (!input.is_open()) {
-            return std::unexpected{detail::fail(error_code::io_open_failed, 0, 0, detail::current_io_error())};
+            return std::unexpected{detail::fail(error_code::io_open_failed, std::nullopt, 0, detail::current_io_error())};
         }
 
         const auto end = input.tellg();
         if (end < 0) {
-            return std::unexpected{detail::fail(error_code::io_seek_failed, 0, 0, detail::current_io_error())};
+            return std::unexpected{detail::fail(error_code::io_seek_failed, std::nullopt, 0, detail::current_io_error())};
         }
-        const auto file_size = static_cast<std::uint64_t>(end);
+        const auto file_size = static_cast<szt>(end);
         if (file_size < detail::storage_head_wire_size) {
             return std::unexpected{detail::fail(error_code::invalid_storage_magic)};
         }
-        if (file_size > static_cast<std::uint64_t>(detail::storage_head_wire_size)
-                            + std::numeric_limits<std::uint32_t>::max()) {
+        const auto entry_size = file_size - detail::storage_head_wire_size;
+        if (entry_size > max_entry_bytes) {
+            return std::unexpected{detail::fail(error_code::resource_limit_exceeded)};
+        }
+        byte_buffer entry_bytes;
+        if (entry_size > detail::maximum_entry_size || entry_size > entry_bytes.max_size()) {
             return std::unexpected{detail::fail(error_code::file_too_large)};
         }
 
         input.seekg(0, std::ios::beg);
         if (!input) {
-            return std::unexpected{detail::fail(error_code::io_seek_failed, 0, 0, detail::current_io_error())};
+            return std::unexpected{detail::fail(error_code::io_seek_failed, std::nullopt, 0, detail::current_io_error())};
         }
 
         std::array<std::byte, detail::storage_head_wire_size> header{};
-        input.read(reinterpret_cast<char *>(header.data()),
-                   static_cast<std::streamsize>(header.size()));
-        if (!input || input.gcount() != static_cast<std::streamsize>(header.size())) {
-            return std::unexpected{detail::fail(error_code::io_read_failed, 0, 0, detail::current_io_error())};
-        }
+        if (auto status = detail::read_bytes(input, header); status) { return std::unexpected{status}; }
         const auto storage = detail::read_trivial<storage_head>(
             std::span<const std::byte>{header});
 
@@ -102,42 +120,12 @@ namespace srl {
             return std::unexpected{detail::fail(error_code::unsupported_compression)};
         }
 
-        byte_buffer entry_bytes;
-        entry_bytes.resize(static_cast<std::size_t>(file_size - detail::storage_head_wire_size));
-        if (!entry_bytes.empty()) {
-            input.read(reinterpret_cast<char *>(entry_bytes.data()),
-                       static_cast<std::streamsize>(entry_bytes.size()));
-            if (!input || input.gcount() != static_cast<std::streamsize>(entry_bytes.size())) {
-                return std::unexpected{detail::fail(error_code::io_read_failed, 0, 0, detail::current_io_error())};
-            }
-        }
+        entry_bytes.resize(static_cast<std::size_t>(entry_size));
+        if (auto status = detail::read_bytes(input, entry_bytes.span()); status) { return std::unexpected{status}; }
         if (auto entry = detail::parse_entry(entry_bytes.span()); !entry) {
             return std::unexpected{entry.error()};
         }
         return entry_bytes;
     }
 
-    template<serializable T>
-    [[nodiscard]] error save(
-        const std::filesystem::path &path,
-        const T &value,
-        const serialization_context &context) {
-        auto bytes = pack(value, context);
-        if (!bytes) {
-            return bytes.error();
-        }
-        return write_block(path, bytes->span());
-    }
-
-    template<typename T>
-        requires serializable<T> && std::default_initializable<codec_value_type<T>>
-    [[nodiscard]] std::expected<codec_value_type<T>, error> load(
-        const std::filesystem::path &path,
-        const serialization_context &context) {
-        auto bytes = read_block(path);
-        if (!bytes) {
-            return std::unexpected{bytes.error()};
-        }
-        return extract<T>(bytes->span(), context);
-    }
 }

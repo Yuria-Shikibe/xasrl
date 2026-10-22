@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include "srl/io.hpp"
+#include "srl/serialization.hpp"
 
 namespace conversion_tests {
     inline const srl::serialization_context default_context;
@@ -276,14 +277,14 @@ namespace conversion_tests {
     };
 
     template<typename T>
-    concept packs_without_context = requires(const T &value) {
-        srl::pack(value);
+    concept serializes_without_context = requires(const T &value, srl::byte_buffer &bytes) {
+        srl::serialize(value, bytes);
     };
 
     template<typename T>
-    concept packs_with_context = requires(const T &value,
+    concept serializes_with_context = requires(const T &value, srl::byte_buffer &bytes,
                                           const srl::serialization_context &context) {
-        srl::pack(value, context);
+        srl::serialize(value, bytes, context);
     };
 
     static_assert(srl::schema_valid<direct_record>());
@@ -293,14 +294,10 @@ namespace conversion_tests {
     static_assert(srl::schema_valid<two_references>());
     static_assert(srl::schema_valid<converted_container>());
     static_assert(srl::schema_valid<converted_nested_record>());
-    static_assert(!packs_without_context<direct_record>);
-    static_assert(packs_with_context<direct_record>);
-    static_assert(requires(std::span<const std::byte> bytes, direct_record &out,
-                           const std::filesystem::path &path) {
-        srl::extract<direct_record>(bytes, default_context);
-        srl::unpack(bytes, out, default_context);
-        srl::decode_root(bytes, out, default_context);
-        srl::load<direct_record>(path, default_context);
+    static_assert(!serializes_without_context<direct_record>);
+    static_assert(serializes_with_context<direct_record>);
+    static_assert(requires(std::span<const std::byte> bytes, direct_record &out) {
+        srl::deserialize(bytes, out, default_context);
     });
     static_assert(!srl::schema_valid<missing_field_tag>());
     static_assert(!srl::schema_valid<duplicate_conversion>());
@@ -322,54 +319,64 @@ namespace conversion_tests {
     inline void test_direct() {
         const direct_record source{runtime_number{42}};
         runtime_number::writes = 0;
-        auto bytes = srl::pack(source, default_context);
-        check(bytes.has_value() && runtime_number::writes == 1, "direct conversion repeated during pack");
+        srl::byte_buffer bytes{};
+        const auto bytes_status = srl::serialize(source, bytes, default_context);
+        check(!bytes_status && runtime_number::writes == 1, "direct conversion repeated during pack");
         runtime_number::reads = 0;
-        auto copy = srl::extract<direct_record>(bytes->span(), default_context);
-        check(copy.has_value() && copy->number.value == 42 && runtime_number::reads == 1,
+        direct_record copy{};
+        const auto copy_status = srl::deserialize(bytes.span(), copy, default_context);
+        check(!copy_status && copy.number.value == 42 && runtime_number::reads == 1,
               "direct conversion did not round trip");
         runtime_number::writes = 0;
         auto size = srl::serialized_size(source, default_context);
-        check(size.has_value() && *size == bytes->size() && runtime_number::writes == 1,
+        check(size == bytes.size() && runtime_number::writes == 0,
               "direct conversion measurement failed");
         srl::byte_buffer destination;
-        destination.resize(*size);
+        destination.resize(size);
         runtime_number::writes = 0;
-        check(!srl::pack_into(destination.span(), source, default_context)
-              && destination == *bytes && runtime_number::writes == 1, "direct pack_into repeated conversion");
+        check(!srl::serialize(source, destination.span(), default_context)
+              && destination == bytes && runtime_number::writes == 1, "direct span serialization repeated conversion");
 
-        auto nested = srl::pack(record_conversion{runtime_number{73}}, default_context);
-        check(nested.has_value(), "record storage conversion failed");
-        auto nested_copy = srl::extract<record_conversion>(nested->span(), default_context);
-        check(nested_copy.has_value() && nested_copy->number.value == 73, "record storage decode failed");
+        srl::byte_buffer nested{};
+        const auto nested_status = srl::serialize(record_conversion{runtime_number{73}}, nested, default_context);
+        check(!nested_status, "record storage conversion failed");
+        record_conversion nested_copy{};
+        const auto nested_copy_status = srl::deserialize(nested.span(), nested_copy, default_context);
+        check(!nested_copy_status && nested_copy.number.value == 73, "record storage decode failed");
 
         const std::vector<move_only_conversion> move_only{
             {runtime_number{1}}, {runtime_number{2}}, {runtime_number{3}}};
-        auto moved = srl::pack(move_only, default_context);
-        check(moved.has_value(), "move-only storage could not be prepared");
-        auto moved_copy = srl::extract<std::vector<move_only_conversion>>(moved->span(), default_context);
-        check(moved_copy.has_value() && moved_copy->size() == 3
-              && moved_copy->at(2).number.value == 3, "move-only storage did not round trip");
+        srl::byte_buffer moved{};
+        const auto moved_status = srl::serialize(move_only, moved, default_context);
+        check(!moved_status, "move-only storage could not be prepared");
+        std::vector<move_only_conversion> moved_copy{};
+        const auto moved_copy_status = srl::deserialize(moved.span(), moved_copy, default_context);
+        check(!moved_copy_status && moved_copy.size() == 3
+              && moved_copy.at(2).number.value == 3, "move-only storage did not round trip");
 
-        auto malformed = *bytes;
+        auto malformed = bytes;
         malformed.resize(malformed.size() - 1);
-        srl::detail::write_trivial(malformed.span(), static_cast<std::uint32_t>(malformed.size()));
+        srl::detail::write_trivial(malformed.span(), static_cast<srl::szt>(malformed.size()));
         direct_record unchanged{runtime_number{99}};
         runtime_number::reads = 0;
-        auto rejected_number = srl::unpack(malformed.span(), unchanged, default_context);
+        auto rejected_number = srl::deserialize(malformed.span(), unchanged, default_context);
         check(rejected_number && rejected_number.code == srl::error_code::invalid_payload_shape
               && rejected_number.id == 7 && runtime_number::reads == 0
               && unchanged.number.value == 99, "invalid storage reached direct conversion");
 
-        auto container = srl::pack(converted_container{runtime_set{{1, 2, 3}}}, default_context);
-        check(container.has_value(), "container conversion failed");
-        auto container_copy = srl::extract<converted_container>(container->span(), default_context);
-        check(container_copy.has_value() && container_copy->values.values == std::set{1, 2, 3},
+        srl::byte_buffer container{};
+        const auto container_status = srl::serialize(converted_container{runtime_set{{1, 2, 3}}}, container, default_context);
+        check(!container_status, "container conversion failed");
+        converted_container container_copy{};
+        const auto container_copy_status = srl::deserialize(container.span(), container_copy, default_context);
+        check(!container_copy_status && container_copy.values.values == std::set{1, 2, 3},
               "container conversion decode failed");
-        auto duplicates = srl::pack(wire_container{{1, 1}}, default_context);
-        check(duplicates.has_value(), "duplicate fixture failed");
-        auto rejected = srl::extract<converted_container>(duplicates->span(), default_context);
-        check(!rejected && rejected.error().code == srl::error_code::duplicate_container_element,
+        srl::byte_buffer duplicates{};
+        const auto duplicates_status = srl::serialize(wire_container{{1, 1}}, duplicates, default_context);
+        check(!duplicates_status, "duplicate fixture failed");
+        converted_container rejected{};
+        const auto rejected_status = srl::deserialize(duplicates.span(), rejected, default_context);
+        check(rejected_status && rejected_status.code == srl::error_code::duplicate_container_element,
               "converted container lost duplicate policy");
     }
 
@@ -383,53 +390,63 @@ namespace conversion_tests {
         write_context.register_handler(srl::handler_key<object_key>(), writer);
         read_context.register_handler(srl::handler_key<object_key>(), reader);
         const reference_record source{&first};
-        auto bytes = srl::pack(source, write_context);
-        check(bytes.has_value() && writer.writes == 1, "context pack repeated conversion");
-        auto copy = srl::extract<reference_record>(bytes->span(), read_context);
-        check(copy.has_value() && copy->reference == &second && reader.reads == 1,
+        srl::byte_buffer bytes{};
+        const auto bytes_status = srl::serialize(source, bytes, write_context);
+        check(!bytes_status && writer.writes == 1, "context pack repeated conversion");
+        reference_record copy{};
+        const auto copy_status = srl::deserialize(bytes.span(), copy, read_context);
+        check(!copy_status && copy.reference == &second && reader.reads == 1,
               "reference was not relocated through the receiving context");
-        auto relocated = srl::pack(*copy, read_context);
-        check(relocated.has_value() && *relocated == *bytes, "runtime address leaked into stored bytes");
-        auto stored = srl::extract<wire_reference>(bytes->span(), default_context);
-        check(stored.has_value() && stored->id == writer.id, "storage payload is not SrlTy");
+        srl::byte_buffer relocated{};
+        const auto relocated_status = srl::serialize(copy, relocated, read_context);
+        check(!relocated_status && relocated == bytes, "runtime address leaked into stored bytes");
+        wire_reference stored{};
+        const auto stored_status = srl::deserialize(bytes.span(), stored, default_context);
+        check(!stored_status && stored.id == writer.id, "storage payload is not SrlTy");
 
         writer.writes = 0;
         auto size = srl::serialized_size(source, write_context);
-        check(size.has_value() && *size == bytes->size() && writer.writes == 1,
+        check(size.has_value() && *size == bytes.size() && writer.writes == 1,
               "context measurement repeated conversion");
         srl::byte_buffer destination;
         destination.resize(*size);
         writer.writes = 0;
-        check(!srl::pack_into(destination.span(), source, write_context)
-              && destination == *bytes && writer.writes == 1, "context pack_into repeated conversion");
+        check(!srl::serialize(source, destination.span(), write_context)
+              && destination == bytes && writer.writes == 1, "context span serialization repeated conversion");
         destination.resize(1);
-        auto wrong_size = srl::pack_into(destination.span(), source, write_context);
+        auto wrong_size = srl::serialize(source, destination.span(), write_context);
         check(wrong_size && wrong_size.code == srl::error_code::invalid_entry_size,
-              "pack_into accepted wrong destination size");
+              "span serialization accepted wrong destination size");
 
-        auto null_bytes = srl::pack(reference_record{}, write_context);
-        check(null_bytes.has_value(), "null reference encoding failed");
-        auto null_copy = srl::extract<reference_record>(null_bytes->span(), read_context);
-        check(null_copy.has_value() && null_copy->reference == nullptr, "legal null reference was rejected");
-        auto invalid = srl::pack(reference_record{&second}, write_context);
-        check(!invalid && invalid.error().code == srl::error_code::invalid_reference
-              && invalid.error().id == 7, "invalid outgoing reference was accepted");
+        srl::byte_buffer null_bytes{};
+        const auto null_bytes_status = srl::serialize(reference_record{}, null_bytes, write_context);
+        check(!null_bytes_status, "null reference encoding failed");
+        reference_record null_copy{};
+        const auto null_copy_status = srl::deserialize(null_bytes.span(), null_copy, read_context);
+        check(!null_copy_status && null_copy.reference == nullptr, "legal null reference was rejected");
+        srl::byte_buffer invalid{};
+        const auto invalid_status = srl::serialize(reference_record{&second}, invalid, write_context);
+        check(invalid_status && invalid_status.code == srl::error_code::invalid_reference
+              && invalid_status.id == 7, "invalid outgoing reference was accepted");
 
-        auto unknown = srl::pack(wire_reference{"unknown-id"}, default_context);
-        check(unknown.has_value(), "unknown reference fixture failed");
+        srl::byte_buffer unknown{};
+        const auto unknown_status = srl::serialize(wire_reference{"unknown-id"}, unknown, default_context);
+        check(!unknown_status, "unknown reference fixture failed");
         reference_record unchanged{&first};
-        auto failed = srl::unpack(unknown->span(), unchanged, read_context);
+        auto failed = srl::deserialize(unknown.span(), unchanged, read_context);
         check(failed && failed.code == srl::error_code::unresolved_reference
-              && failed.id == 7 && failed.offset == 24 && unchanged.reference == &first,
+              && failed.id == 7
+              && failed.offset == srl::detail::entry_head_wire_size + srl::detail::entry_mapping_wire_size
+              && unchanged.reference == &first,
               "unknown reference lost error context or changed output");
         reader.throw_on_read = true;
-        expect_throw<std::runtime_error>([&] { (void)srl::unpack(bytes->span(), unchanged, read_context); });
+        expect_throw<std::runtime_error>([&] { (void)srl::deserialize(bytes.span(), unchanged, read_context); });
         check(unchanged.reference == &first, "handler exception changed unpack output");
         reader.throw_on_read = false;
 
-        expect_throw<std::logic_error>([&] { (void)srl::pack(source, srl::serialization_context{}); });
+        expect_throw<std::logic_error>([&] { (void)srl::serialize(source, bytes, srl::serialization_context{}); });
         expect_throw<std::logic_error>([&] {
-            (void)srl::extract<reference_record>(bytes->span(), srl::serialization_context{});
+            (void)srl::deserialize(bytes.span(), unchanged, srl::serialization_context{});
         });
         expect_throw<std::logic_error>([&] {
             write_context.register_handler(srl::handler_key<object_key>(), reader);
@@ -438,63 +455,75 @@ namespace conversion_tests {
         wrong_handler wrong;
         srl::serialization_context mismatched;
         mismatched.register_handler(srl::handler_key<object_key>(), wrong);
-        expect_throw<std::logic_error>([&] { (void)srl::pack(source, mismatched); });
-        expect_throw<std::logic_error>([&] { (void)srl::extract<reference_record>(bytes->span(), mismatched); });
+        expect_throw<std::logic_error>([&] { (void)srl::serialize(source, bytes, mismatched); });
+        expect_throw<std::logic_error>([&] { (void)srl::deserialize(bytes.span(), unchanged, mismatched); });
 
         reference_handler alternate{second, "alternate-id"};
         write_context.register_handler(&alternate_key, alternate);
-        auto dual = srl::pack(two_references{&first, &second}, write_context);
-        check(dual.has_value(), "two strategies for the same type pair failed");
-        auto dual_copy = srl::extract<two_references>(dual->span(), write_context);
-        check(dual_copy.has_value() && dual_copy->first == &first && dual_copy->second == &second,
+        srl::byte_buffer dual{};
+        const auto dual_status = srl::serialize(two_references{&first, &second}, dual, write_context);
+        check(!dual_status, "two strategies for the same type pair failed");
+        two_references dual_copy{};
+        const auto dual_copy_status = srl::deserialize(dual.span(), dual_copy, write_context);
+        check(!dual_copy_status && dual_copy.first == &first && dual_copy.second == &second,
               "handler identity was replaced by type-pair identity");
 
         nested_record nested{{reference_record{&first}, reference_record{}}, {{3, {&first}}}};
         writer.writes = 0;
-        auto nested_bytes = srl::pack(nested, write_context);
-        check(nested_bytes.has_value() && writer.writes == 3, "nested conversion repeated or omitted");
-        auto nested_copy = srl::extract<nested_record>(nested_bytes->span(), read_context);
-        check(nested_copy.has_value() && nested_copy->references[0].reference == &second
-              && nested_copy->references[1].reference == nullptr
-              && nested_copy->lookup.at(3).reference == &second, "nested context was not forwarded");
+        srl::byte_buffer nested_bytes{};
+        const auto nested_bytes_status = srl::serialize(nested, nested_bytes, write_context);
+        check(!nested_bytes_status && writer.writes == 3, "nested conversion repeated or omitted");
+        nested_record nested_copy{};
+        const auto nested_copy_status = srl::deserialize(nested_bytes.span(), nested_copy, read_context);
+        check(!nested_copy_status && nested_copy.references[0].reference == &second
+              && nested_copy.references[1].reference == nullptr
+              && nested_copy.lookup.at(3).reference == &second, "nested context was not forwarded");
 
         writer.writes = 0;
         srl::byte_buffer nested_destination;
-        nested_destination.resize(nested_bytes->size());
-        check(!srl::pack_into(nested_destination.span(), nested, write_context)
-              && writer.writes == 3 && nested_destination == *nested_bytes,
-              "nested pack_into repeated conversion");
+        nested_destination.resize(nested_bytes.size());
+        check(!srl::serialize(nested, nested_destination.span(), write_context)
+              && writer.writes == 3 && nested_destination == nested_bytes,
+              "nested span serialization repeated conversion");
 
         raw_reference_handler raw{second};
         srl::serialization_context raw_context;
         raw_context.register_handler(srl::handler_key<object_key>(), raw);
-        auto raw_bytes = srl::pack(reference_record{&second}, raw_context);
-        check(raw_bytes.has_value(), "raw erased handler encoding failed");
-        auto raw_copy = srl::extract<reference_record>(raw_bytes->span(), raw_context);
-        check(raw_copy.has_value() && raw_copy->reference == &second, "raw erased handler decoding failed");
+        srl::byte_buffer raw_bytes{};
+        const auto raw_bytes_status = srl::serialize(reference_record{&second}, raw_bytes, raw_context);
+        check(!raw_bytes_status, "raw erased handler encoding failed");
+        reference_record raw_copy{};
+        const auto raw_copy_status = srl::deserialize(raw_bytes.span(), raw_copy, raw_context);
+        check(!raw_copy_status && raw_copy.reference == &second, "raw erased handler decoding failed");
 
         converted_nested_record converted{reference_bundle{{reference_record{&first}}}};
         reference_bundle::writes = 0;
         writer.writes = 0;
-        auto converted_bytes = srl::pack(converted, write_context);
-        check(converted_bytes.has_value() && writer.writes == 1 && reference_bundle::writes == 1,
+        srl::byte_buffer converted_bytes{};
+        const auto converted_bytes_status = srl::serialize(converted, converted_bytes, write_context);
+        check(!converted_bytes_status && writer.writes == 1 && reference_bundle::writes == 1,
               "conversion within SrlTy repeated or lost context");
-        auto converted_copy = srl::extract<converted_nested_record>(converted_bytes->span(), read_context);
-        check(converted_copy.has_value() && converted_copy->bundle.values[0].reference == &second,
+        converted_nested_record converted_copy{};
+        const auto converted_copy_status = srl::deserialize(converted_bytes.span(), converted_copy, read_context);
+        check(!converted_copy_status && converted_copy.bundle.values[0].reference == &second,
               "conversion within SrlTy failed to decode");
 
         reference_record array[] = {{&first}, {nullptr}};
-        auto array_bytes = srl::pack(array, write_context);
-        check(array_bytes.has_value(), "context root array pack failed");
+        srl::byte_buffer array_bytes{};
+        const auto array_bytes_status = srl::serialize(array, array_bytes, write_context);
+        check(!array_bytes_status, "context root array pack failed");
         reference_record array_copy[2]{};
-        check(!srl::unpack(array_bytes->span(), array_copy, read_context)
+        check(!srl::deserialize(array_bytes.span(), array_copy, read_context)
               && array_copy[0].reference == &second && array_copy[1].reference == nullptr,
               "context root array unpack failed");
 
         const auto path = std::filesystem::temp_directory_path() / "srl_conversion_round_trip.bin";
-        check(!srl::save(path, source, write_context), "context save failed");
-        auto loaded = srl::load<reference_record>(path, read_context);
-        check(loaded.has_value() && loaded->reference == &second, "context load failed");
+        check(!srl::write_block(path, bytes.span()), "context block write failed");
+        auto block = srl::read_block(path);
+        check(block.has_value(), "context block read failed");
+        reference_record loaded{};
+        check(!srl::deserialize(block->span(), loaded, read_context)
+              && loaded.reference == &second, "context file decode failed");
         std::filesystem::remove(path);
     }
 

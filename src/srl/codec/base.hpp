@@ -45,11 +45,17 @@ namespace srl {
 
     template<primitive T>
     struct atomic_codec<T> {
-        using wire_type = T;
+        using wire_type = decltype([] {
+            if constexpr (std::is_enum_v<T>) {
+                return std::type_identity<std::underlying_type_t<T>>{};
+            } else {
+                return std::type_identity<T>{};
+            }
+        }())::type;
 
         static_assert(!std::floating_point<T> || std::numeric_limits<T>::is_iec559,
                       "srl floating codecs require IEC 559 representation");
-        static constexpr std::size_t fixed_size = sizeof(wire_type);
+        static constexpr szt fixed_size = sizeof(wire_type);
 
         [[nodiscard]] static error encode(
             const T &value,

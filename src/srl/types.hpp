@@ -4,6 +4,8 @@
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <stdexcept>
 #include <system_error>
 #include <type_traits>
 
@@ -11,20 +13,41 @@ namespace srl {
     static_assert(CHAR_BIT == 8, "srl requires 8-bit bytes");
     static_assert(std::endian::native == std::endian::little, "srl only supports little-endian targets");
 
+    using szt = std::uint64_t;
     using id_type = std::uint32_t;
     using type_hash_type = std::uint32_t;
 
     enum class entry_kind : std::uint8_t {
         atomic = 1,
-        record = 2,
-        container = 3,
-        stream = 4,
+        stream = 2,
+        record = 3,
+        sequence = 4,
+        map = 5,
     };
 
-    enum class mapping_kind : std::uint8_t {
-        none = 1,
-        field = 2,
-        element = 3,
+    class entry_metadata {
+        // Low 24 bits: mapping count; high 8 bits: mutually exclusive wire kind.
+        std::uint32_t bits_{};
+
+    public:
+        static constexpr std::uint32_t max_mapping_count = 0x00ffffffu;
+
+        constexpr entry_metadata() = default;
+
+        constexpr entry_metadata(szt count, entry_kind kind) {
+            if (count > max_mapping_count) {
+                throw std::out_of_range("entry mapping count exceeds 24 bits");
+            }
+            bits_ = static_cast<std::uint32_t>(count) | (static_cast<std::uint32_t>(kind) << 24);
+        }
+
+        [[nodiscard]] constexpr std::uint32_t mapping_count() const noexcept {
+            return bits_ & max_mapping_count;
+        }
+
+        [[nodiscard]] constexpr entry_kind kind() const noexcept {
+            return static_cast<entry_kind>(bits_ >> 24);
+        }
     };
 
     struct storage_head {
@@ -34,21 +57,23 @@ namespace srl {
     };
 
     struct entry_head {
-        std::uint32_t size{};
-        std::uint32_t mapping_count{};
+        szt size{};
+        entry_metadata metadata{};
+        type_hash_type wire_type{};
 
-        //TODO use at pow of 2, 0 for 1; 1 for 2; 2 for 4; 3 for 8; ...
-        std::uint8_t mapping_align{};
-        entry_kind kind{};
-        mapping_kind mapping{};
-        std::uint8_t mapping_group_size{};
+        [[nodiscard]] constexpr std::uint32_t mapping_count() const noexcept {
+            return metadata.mapping_count();
+        }
 
-        type_hash_type type_raw_name_hash{};
+        [[nodiscard]] constexpr entry_kind kind() const noexcept {
+            return metadata.kind();
+        }
     };
 
     struct entry_mapping {
         id_type id{};
-        std::uint32_t aligned_address{};
+        type_hash_type wire_type{};
+        szt offset{};
     };
 
     static_assert(std::is_standard_layout_v<storage_head>
@@ -59,21 +84,25 @@ namespace srl {
                   && sizeof(entry_head) == 16);
     //TODO use c++26 reflection function
 
-    static_assert(offsetof(entry_head, kind) == 9);
-    static_assert(offsetof(entry_head, mapping) == 10);
-    static_assert(offsetof(entry_head, mapping_group_size) == 11);
-    static_assert(offsetof(entry_head, type_raw_name_hash) == 12);
+    static_assert(sizeof(entry_metadata) == 4);
+    static_assert(offsetof(entry_head, size) == 0);
+    static_assert(offsetof(entry_head, metadata) == 8);
+    static_assert(offsetof(entry_head, wire_type) == 12);
     static_assert(std::is_standard_layout_v<entry_mapping>
                   && std::is_trivially_copyable_v<entry_mapping>
-                  && sizeof(entry_mapping) == 8);
+                  && sizeof(entry_mapping) == 16);
+    static_assert(offsetof(entry_mapping, id) == 0);
+    static_assert(offsetof(entry_mapping, wire_type) == 4);
+    static_assert(offsetof(entry_mapping, offset) == 8);
 
     enum class error_code : std::uint8_t {
         none,
         entry_too_large,
+        too_many_mappings,
+        resource_limit_exceeded,
         truncated_entry_header,
         invalid_entry_size,
         truncated_mapping_table,
-        unsupported_mapping_alignment,
         invalid_entry_classification,
         entry_kind_mismatch,
         invalid_mapping_order,
@@ -95,6 +124,7 @@ namespace srl {
         io_read_failed,
         io_write_failed,
         io_flush_failed,
+        io_commit_failed,
         file_too_large,
         unresolved_reference,
         invalid_reference,
@@ -102,25 +132,25 @@ namespace srl {
 
     struct error {
         error_code code{error_code::none};
-        id_type id{};
-        std::uint32_t offset{};
-        std::error_code system_error{};
+        std::optional<id_type> id;
+        szt offset{};
+        std::optional<std::error_code> system_error;
 
         [[nodiscard]] constexpr explicit operator bool() const noexcept {
             return code != error_code::none;
         }
 
-        constexpr error& set_id(id_type value) noexcept {
-            if (id == 0 && value != 0) {
+        constexpr error& set_id(std::optional<id_type> value) noexcept {
+            if (!id) {
                 id = value;
             }
             return *this;
         }
 
-        constexpr error& set_offset(std::uint32_t value) noexcept {
-            if (offset == 0 && value != 0) {
-                offset = value;
-            }
+        // Codec errors are relative to their input. Each enclosing codec adds
+        // its payload origin exactly once on the error path.
+        constexpr error& rebase(szt origin) noexcept {
+            offset += origin;
             return *this;
         }
     };

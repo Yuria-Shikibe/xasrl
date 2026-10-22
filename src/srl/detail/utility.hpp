@@ -6,8 +6,10 @@
 #include <cstdint>
 #include <cstring>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <meta>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <type_traits>
@@ -60,20 +62,22 @@ namespace srl {
 
     namespace detail {
         constexpr std::uint64_t storage_magic = 0x31304e49424c5253ull;
-        constexpr std::uint32_t storage_version = 2;
+        constexpr std::uint32_t storage_version = 4;
         constexpr std::uint32_t compression_none = 0;
-        constexpr std::uint32_t storage_head_wire_size = sizeof(storage_head);
-        constexpr std::uint32_t entry_head_wire_size = sizeof(entry_head);
-        constexpr std::uint32_t entry_mapping_wire_size = sizeof(entry_mapping);
-        constexpr std::uint8_t initial_mapping_alignment = 1;
+        constexpr szt storage_head_wire_size = sizeof(storage_head);
+        constexpr szt entry_head_wire_size = sizeof(entry_head);
+        constexpr szt entry_mapping_wire_size = sizeof(entry_mapping);
+        // The all-ones extent is reserved by std::span for dynamic_extent.
+        static_assert(sizeof(std::size_t) <= sizeof(szt));
+        constexpr szt maximum_entry_size = std::numeric_limits<std::size_t>::max() - 1;
         constexpr type_hash_type fnv1a32_offset = 2166136261u;
         constexpr type_hash_type fnv1a32_prime = 16777619u;
 
         [[nodiscard]] constexpr error fail(
             error_code code,
-            id_type id = 0,
-            std::uint32_t offset = 0,
-            std::error_code system_error = {}) noexcept {
+            std::optional<id_type> id = std::nullopt,
+            szt offset = 0,
+            std::optional<std::error_code> system_error = std::nullopt) noexcept {
             return error{
                 .code = code,
                 .id = id,

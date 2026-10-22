@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "srl/io.hpp"
+#include "srl/serialization.hpp"
 
 struct Person {
     [[=srl::tag::field{.id = 1}]]

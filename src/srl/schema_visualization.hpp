@@ -63,34 +63,19 @@ namespace srl::detail {
             return;
         }
         out.append(" {\n");
-        for (auto entity: schema_entities(type)) {
-            if (!forced && annotation_count(entity, ^^tag::transient) != 0) {
-                continue;
-            }
-            const bool base = std::meta::is_base(entity);
+        for (const auto field: node.object.fields()) {
             append_schema_indent(out, depth + 1);
-            if (forced) {
-                out.append(base ? "[atomic base] " : "[atomic member] ");
-            } else {
-                out.append(atomic_root ? "[atom-root " : "[atom ");
-                out.append(base ? "base] " : "memb] ");
-            }
-            append_schema_entity_name(out, entity);
+            out.append("[wire +");
+            append_schema_unsigned(out, field.wire_offset);
+            out.append("] ");
+            append_schema_entity_name(out, field.entity);
             out.append(": ");
-            const auto child_type = std::meta::remove_cvref(std::meta::type_of(entity));
-            if (forced) {
-                out.append(schema_type_name(std::meta::type_of(entity)));
-            } else {
-                const auto facts = schema_facts(child_type);
-                if (facts.atomic) {
-                    schema_node child{.kind = schema_kind::atomic, .type = child_type};
-                    child.encode_extent = facts.extent;
-                    child.representation = facts.representation;
-                    append_atomic_schema(out, child, std::meta::type_of(entity), depth + 1, false);
-                } else {
-                    out.append(schema_type_name(std::meta::type_of(entity)));
-                }
-            }
+            out.append(schema_type_name(field.type));
+            out.append(" (size: ");
+            append_schema_unsigned(out, field.size);
+            out.append(", object +");
+            append_schema_unsigned(out, field.object_offset);
+            out.push_back(')');
             out.push_back('\n');
         }
         append_schema_indent(out, depth);
@@ -147,6 +132,9 @@ namespace srl::detail {
                 }
                 if (child.duplicates == schema_duplicates::reject) {
                     out.append(" [duplicates: reject]");
+                }
+                if (child.has_field_id) {
+                    out.append(child.fallback_type == std::meta::info{} ? " [required]" : " [fallback]");
                 }
             }
             out.push_back('\n');
