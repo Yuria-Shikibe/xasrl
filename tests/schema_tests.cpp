@@ -206,7 +206,7 @@ namespace {
 
     constexpr xasrl::schema record_description(^^constructed_record);
     constexpr xasrl::schema stream_description(^^constructed_stream);
-    constexpr xasrl::schema typed_description(std::in_place_type<const constructed_stream &>);
+    constexpr xasrl::schema typed_description(^^const constructed_stream &);
     constexpr xasrl::schema forced_description(^^constructed_record, true);
     static_assert(record_description.value_node().kind() == xasrl::schema_kind::record);
     static_assert(stream_description.value_node().kind() == xasrl::schema_kind::stream);
@@ -228,8 +228,8 @@ namespace {
     static_assert(annotated.converted() && annotated.field().conversion == xasrl::schema_conversion_kind::cast);
     static_assert(annotated.type() == annotated.field().memory_type());
 
-    constexpr auto sequence = xasrl::schema(std::in_place_type<std::vector<int>>).tree;
-    constexpr auto map = xasrl::schema(std::in_place_type<std::map<int, long>>).tree;
+    constexpr auto sequence = xasrl::schema(^^std::vector<int>).tree;
+    constexpr auto map = xasrl::schema(^^std::map<int, long>).tree;
     static_assert(sequence.value_node().container().shape == xasrl::schema_container_shape::sequence);
     static_assert(sequence.child_indices(sequence.value_index()).size() == 1);
     static_assert(sequence[sequence.value_index(), 0].slot().role == xasrl::schema_slot_role::element);

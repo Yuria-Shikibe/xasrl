@@ -17,14 +17,18 @@ namespace xasrl {
         return detail::schema_has_fields(std::meta::remove_cvref(type));
     }
 
+    consteval bool is_reflected_record(std::meta::info type) {
+        return has_serialized_fields(type)
+        && detail::annotation_count(std::meta::remove_cvref(type), ^^tag::auto_stream) == 0
+        && detail::annotation_count(std::meta::remove_cvref(type), ^^tag::leaf) == 0;
+    }
+
     template<typename T>
-    concept reflected_record = has_serialized_fields(^^T)
-        && detail::annotation_count(^^codec_value_type<T>, ^^tag::auto_stream) == 0
-        && detail::annotation_count(^^codec_value_type<T>, ^^tag::leaf) == 0;
+    concept reflected_record = is_reflected_record(^^T);
 
     template<typename T>
     concept reflected_stream =
-        detail::annotation_count(^^codec_value_type<T>, ^^tag::auto_stream) != 0;
+        detail::annotation_count(std::meta::remove_cvref(^^T), ^^tag::auto_stream) != 0;
 
     template<typename T>
     concept container_serializable = detail::adapted_container<codec_value_type<T>>;
@@ -39,9 +43,6 @@ namespace xasrl {
         consteval explicit schema(std::meta::info type)
             : schema(type, detail::annotation_count(std::meta::remove_cvref(type), ^^tag::auto_stream) != 0) {}
 
-        template<typename T>
-        consteval explicit schema(std::in_place_type_t<T>)
-            : schema(^^T, reflected_stream<T>) {}
 
         consteval schema(std::meta::info type, bool stream)
             : tree(detail::build_schema(type, stream)) {}
@@ -56,11 +57,12 @@ namespace xasrl {
     };
 
     namespace detail {
+
         template<typename T>
-        inline constexpr schema schema_for{^^T};
+        inline constexpr schema_tree root_extent_tree = schema{^^T}.tree;
 
         template<typename T, schema_storage Mode = schema_storage::embedded>
-        inline constexpr schema_extent root_encode_extent = mapping_layout_for<schema_for<T>.tree>.extent(0, Mode == schema_storage::schema_only);
+        inline constexpr schema_extent root_encode_extent = mapping_layout_for<root_extent_tree<T>>.extent(0, Mode == schema_storage::schema_only);
     }
 
     [[nodiscard]] consteval schema_issue inspect_schema(std::meta::info type) {

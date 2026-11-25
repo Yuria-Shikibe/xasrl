@@ -9,7 +9,7 @@ registration, macros, or duplicated serialization boilerplate.
 * This repo is under DEV, no forward compatibility guarantees are required.
 
 - `src/srl/`: serialization library, currently centered on `core.hpp`.
-- `main.cpp`: executable experiments and usage examples.
+- `examples/main.cpp`: executable experiments and usage examples.
 - `xmake.lua`: authoritative build configuration; `srl` is the header-only
   library, `srl.example` is the default executable, and `srl.tests` and
   `srl.benchmarks` are opt-in executables.

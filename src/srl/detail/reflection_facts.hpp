@@ -106,8 +106,7 @@ namespace xasrl::detail {
             const entity_facts facts{entity};
             if (annotation_count(entity, ^^tag::inline_mapping) != 0 || facts.streams != 0 || facts.transient > 1 || facts.bypass > 1 || facts.validation_bypasses > 1
                 || facts.fields != 0 || facts.leaves != 0 || facts.containers != 0
-                || facts.fallbacks != 0 || facts.conversions != 0
-                || annotation_count(entity, ^^tag::accept_id) != 0) {
+                || facts.fallbacks != 0 || facts.conversions != 0) {
                 return entity;
             }
             if (facts.transient == 1) {

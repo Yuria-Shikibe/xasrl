@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <functional>
 #include <meta>
+#include <stdexcept>
 
 #include "annotation_target.hpp"
 #include "conversion.hpp"
@@ -185,33 +186,37 @@ namespace xasrl {
             constexpr bool operator==(const field &) const noexcept = default;
         };
 
+        struct [[=target::compound]] extractor {};
+
         /** Adds an incoming ID for in-memory assignment only. May be repeated. */
         struct [[=target::data]] accept_id {
             id_type id{};
         };
 
-        /** Adds an incoming member for in-memory assignment only. May be repeated. */
+        /** Selects an exact source member or direct base for in-memory assignment. May be repeated. */
         struct [[=target::data]] accept_member {
-            std::meta::info where;
-
-            consteval accept_member() = default;
+            const std::meta::info where;
 
             consteval explicit accept_member(std::meta::info where)
                 : where(where) {
-                if (!std::meta::is_nonstatic_data_member(where)) {
-                    //TODO throw here
+                if (!std::meta::is_base(where)
+                    && (!std::meta::is_nonstatic_data_member(where) || std::meta::is_bit_field(where))) {
+                    throw std::invalid_argument("accept_member requires a non-bit-field member or a base");
                 }
             }
 
+            consteval accept_member(std::meta::info class_type, std::meta::info base_type)
+                : where(find_base(class_type, base_type)) {}
 
-            consteval explicit accept_member(std::meta::info class_type, std::meta::info base_type){
-                for (auto b : std::meta::bases_of(class_type, std::meta::access_context::unchecked())) {
-                    if (std::meta::type_of(b) == base_type) {
-                        where = b;
+        private:
+            static consteval std::meta::info find_base(std::meta::info owner, std::meta::info base) {
+                if (std::meta::is_class_type(owner) && std::meta::is_complete_type(owner)
+                    && std::meta::is_class_type(base)) {
+                    for (auto candidate: std::meta::bases_of(owner, std::meta::access_context::unchecked())) {
+                        if (std::meta::is_same_type(std::meta::type_of(candidate), base)) { return candidate; }
                     }
                 }
-
-                //TODO throw
+                throw std::invalid_argument("accept_member requires a direct base of the specified class");
             }
         };
 

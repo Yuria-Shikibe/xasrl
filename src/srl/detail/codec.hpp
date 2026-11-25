@@ -827,9 +827,9 @@ namespace xasrl::detail {
 
     template<typename T>
     struct root_codec {
-        static constexpr schema_tree tree = schema_for<T>.tree;
+        static constexpr schema_tree tree = schema{^^T}.tree;
         static constexpr szt node = tree.value_index();
-        static constexpr schema_node descriptor = schema_for<T>.value_node();
+        static constexpr schema_node descriptor = schema{^^T}.value_node();
         static constexpr bool uses_recorder = encoding_uses_recorder(tree, node);
 
         template<schema_storage Mode>

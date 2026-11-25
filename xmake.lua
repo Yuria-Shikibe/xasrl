@@ -18,7 +18,12 @@ target("srl")
 
 target("srl.example")
     set_kind("binary")
-    add_files("main.cpp")
+    add_files("examples/main.cpp")
+    add_deps("srl")
+
+target("srl.example.assign")
+    set_kind("binary")
+    add_files("examples/assign.cpp")
     add_deps("srl")
 
 target("srl.tests")

@@ -23,7 +23,11 @@ struct [[=xasrl::tag::leaf{.allow_non_unique_presentation = true}]] trans2 {
 };
 
 
-struct PlayerProfile {
+struct [[=xasrl::tag::auto_seq{}]] PlayerVitals {
+    int health{80};
+};
+
+struct PlayerProfile : PlayerVitals {
     [[=xasrl::tag::field{.id = 1}]]
     std::string name{};
 
@@ -38,19 +42,24 @@ struct PlayerProfile {
 
     [[=xasrl::tag::field{.id = 3}]]
     int level{};
+
+    std::string label{};
 };
 
 struct PlayerProfileView {
     PlayerProfileView &operator=(const PlayerProfileView &) = default;
 
-    [[=xasrl::tag::field{1}]]
+    [[=xasrl::tag::accept_member{^^PlayerProfile::label}]]
     std::string display_name{};
 
-    [[=xasrl::tag::field{30}, =xasrl::tag::accept_id{3}]]
+    [[=xasrl::tag::accept_id{3}]]
     long long rank{};
 
     [[=xasrl::tag::field{31}]]
     int lives{3};
+
+    [[=xasrl::tag::accept_member{^^PlayerProfile, ^^PlayerVitals}]]
+    PlayerVitals vitals{.health = 0};
 };
 
 int main() {
@@ -60,11 +69,13 @@ int main() {
         .name = "reflection demo",
         .vals = {{1, 2}, {5, 4}, {2, 3}},
         .level = 26,
+        .label = "arena profile",
     };
 
     PlayerProfileView view;
-    xasrl::mem::transform_assign(view, std::as_const(source));
-    std::println("In-memory copy: {}, rank {}, lives {}", view.display_name, view.rank, view.lives);
+    xasrl::transform_assign(view, std::as_const(source));
+    std::println("In-memory copy: {}, rank {}, lives {}, health {}",
+                 view.display_name, view.rank, view.lives, view.vitals.health);
 
     std::println("Schema (compact):\n{0}\n\nSchema (detailed):\n{0:d}"
                  "\n\nSchema (memory, default 8B/row):\n{0:b}"
@@ -102,6 +113,7 @@ int main() {
     std::println("Nested sequence: {} embedded bytes, {} schema-only bytes", embedded_size, bytes.size());
 
     PlayerProfileView moved;
-    xasrl::mem::transform_assign(moved, std::move(source));
-    std::println("In-memory move: {}, rank {}, lives {}", moved.display_name, moved.rank, moved.lives);
+    xasrl::transform_assign(moved, std::move(source));
+    std::println("In-memory move: {}, rank {}, lives {}, health {}",
+                 moved.display_name, moved.rank, moved.lives, moved.vitals.health);
 }

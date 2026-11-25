@@ -428,10 +428,6 @@ namespace xasrl::detail {
             const bool stream = context.stream();
             const bool automatic = context.automatic();
             const bool serialized = automatic || facts.fields == 1;
-            if ((stream || !serialized || facts.transient != 0)
-                && annotation_count(entity, ^^tag::accept_id) != 0) {
-                reject(schema_error::conflicting_annotations, entity, "accept_id requires a record field");
-            }
             if (annotation_count(entity, ^^tag::inline_mapping) != 0 && (!serialized || facts.transient != 0)) {
                 reject(schema_error::conflicting_annotations, entity, "inline_mapping requires a serialized field");
             }

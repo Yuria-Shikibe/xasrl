@@ -306,16 +306,20 @@ stream header 记录由字段顺序、名称和 wire 类型生成的布局指纹
 
 ## 内存对象赋值
 
-包含 `srl/mem/struct_transform.hpp` 后，用 `xasrl::mem::transform_assign(dst, src)` 对两个 record 的直接字段赋值，
+包含 `srl/mem/struct_transform.hpp` 后，用 `xasrl::transform_assign(dst, src)` 从源 record 给目标的直接字段赋值，
 源为左值时按左值赋值，传入 `std::move(src)` 时按右值赋值。
 两端 record 的拷贝或移动构造、赋值函数可以由编译器隐式声明或显式写成 `= default`，
 但不能自定义实现或显式写成 `= delete`。
-目标字段优先匹配同主 ID 的源字段，否则尝试目标字段的 `[[=xasrl::tag::accept_id{旧ID}]]`。
-没有匹配时保留目标原值；多个别名同时命中、字段不可赋值或算术转换发生窄化时拒绝编译。
+目标字段先尝试显式来源：`[[=xasrl::tag::accept_member{^^Source::member}]]` 指定直接成员，
+`[[=xasrl::tag::accept_member{^^Source, ^^Base}]]` 指定直接基类。来源不需要序列化 ID。
+显式来源未命中时，如果目标字段有主 ID 则尝试相同主 ID，然后尝试 `[[=xasrl::tag::accept_id{旧ID}]]`。
+没有主 ID 的目标成员或基类可只声明 `accept_id` 或 `accept_member`，无需加入序列化 schema。
+没有匹配时保留目标原值；同一匹配层级命中多个不同来源、字段不可赋值或算术转换发生窄化时拒绝编译。
 跨版本重定向宜使用显式 ID，避免字段重排改变 `auto_seq` 分配的 ID
 
 别名仅在内存赋值时生效，不影响序列化格式，也不会触发序列化转换或缺失字段的 fallback。
-赋值按目标 ID 顺序执行，不递归匹配。移动时同一个源字段只能匹配一个目标字段；
+先按目标 ID 顺序赋值有主 ID 的字段，再按反射顺序处理仅有别名的字段。不递归匹配。
+移动时同一个源字段只能匹配一个目标字段；
 移动赋值抛出异常时直接传播，不回滚，也不保证源对象或目标对象的状态
 
 ## 字段表示转换

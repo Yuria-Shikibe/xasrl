@@ -57,7 +57,7 @@ int main() {
 ## 仓库导航
 
 - [库接口与格式参考](src/srl/README.md)：字段注解、转换、错误模型、内存格式与磁盘块
-- [可运行示例](main.cpp)：schema 展示、对象往返和嵌套容器
+- [可运行示例](examples/main.cpp)：schema 展示、对象往返和嵌套容器
 - [测试](tests/)：GoogleTest 用例及编译失败诊断
 - [性能基准](benchmarks/README.md)：`srl.benchmarks` 的运行方法与对比口径
 - [构建配置](xmake.lua)和[仓库约定](AGENTS.md)
