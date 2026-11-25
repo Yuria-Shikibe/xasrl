@@ -64,7 +64,8 @@ namespace {
         EXPECT_EQ(copy.values.get_allocator().resource(), &memory);
         EXPECT_EQ(copy.nested[1].get_allocator().resource(), &memory);
         EXPECT_EQ(copy.cache.get_allocator().resource(), &memory);
-        ASSERT_FALSE(srl::serialize(record, bytes, context));
+        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        ASSERT_FALSE(srl::serialize(record, bytes, srl::srl_context{context, recorder}));
         record.values[0] = 42;
         ASSERT_FALSE(srl::deserialize(bytes.span(), record, context));
         EXPECT_EQ(record.values[0], 4);
@@ -72,7 +73,7 @@ namespace {
         EXPECT_EQ(record.nested[0].get_allocator().resource(), &memory);
 
         std::pmr::vector<int> array[]{std::pmr::vector<int>({1}, &memory)};
-        ASSERT_FALSE(srl::serialize(array, bytes, context));
+        ASSERT_FALSE(srl::serialize(array, bytes, srl::srl_context{context, recorder}));
         ASSERT_FALSE(srl::deserialize(bytes.span(), array, context));
         EXPECT_EQ(array[0].get_allocator().resource(), &memory);
     }
@@ -82,7 +83,7 @@ namespace {
         srl::serialization_context context;
         srl::byte_buffer bytes;
         ASSERT_FALSE(srl::serialize(std::vector<int>{1, 2}, bytes, context));
-        bytes[11] = std::byte{0};
+        bytes[27] = std::byte{0};
         std::pmr::vector<int> out({99}, &memory);
         EXPECT_TRUE(srl::deserialize(bytes.span(), out, context));
         EXPECT_EQ(out.get_allocator().resource(), &memory);
@@ -108,7 +109,8 @@ namespace {
         EXPECT_EQ(staged.values[1][1][0], 4);
         srl::serialization_context context;
         srl::byte_buffer bytes;
-        ASSERT_FALSE(srl::serialize(value, bytes, context));
+        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        ASSERT_FALSE(srl::serialize(value, bytes, srl::srl_context{context, recorder}));
         value.values[0][0][0] = 99;
         ASSERT_FALSE(srl::deserialize(bytes.span(), value, context));
         EXPECT_EQ(value.values[0][0][0], 1);

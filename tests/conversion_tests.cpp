@@ -1,3 +1,5 @@
+#include <memory_resource>
+
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -347,7 +349,8 @@ namespace conversion_tests {
         const std::vector<move_only_conversion> move_only{
             {runtime_number{1}}, {runtime_number{2}}, {runtime_number{3}}};
         srl::byte_buffer moved{};
-        const auto moved_status = srl::serialize(move_only, moved, default_context);
+        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        const auto moved_status = srl::serialize(move_only, moved, srl::srl_context{default_context, recorder});
         check(!moved_status, "move-only storage could not be prepared");
         std::vector<move_only_conversion> moved_copy{};
         const auto moved_copy_status = srl::deserialize(moved.span(), moved_copy, default_context);
@@ -356,7 +359,11 @@ namespace conversion_tests {
 
         auto malformed = bytes;
         malformed.resize(malformed.size() - 1);
-        srl::detail::write_trivial(malformed.span(), static_cast<srl::szt>(malformed.size()));
+        constexpr auto root = srl::detail::document_header_size;
+        constexpr auto leaf_width = root + srl::detail::entry_head_wire_size + srl::detail::definition_reference_size
+                                    + srl::detail::definition_header_size + 8;
+        srl::detail::write_trivial(malformed.span().subspan(root), static_cast<srl::szt>(malformed.size() - root));
+        srl::detail::write_trivial(malformed.span().subspan(leaf_width), srl::szt{3});
         direct_record unchanged{runtime_number{99}};
         runtime_number::reads = 0;
         auto rejected_number = srl::deserialize(malformed.span(), unchanged, default_context);
@@ -436,7 +443,7 @@ namespace conversion_tests {
         auto failed = srl::deserialize(unknown.span(), unchanged, read_context);
         check(failed && failed.code == srl::error_code::unresolved_reference
               && failed.id == 7
-              && failed.offset == srl::detail::entry_head_wire_size + srl::detail::entry_mapping_wire_size
+              && failed.offset == 60
               && unchanged.reference == &first,
               "unknown reference lost error context or changed output");
         reader.throw_on_read = true;
@@ -471,7 +478,8 @@ namespace conversion_tests {
         nested_record nested{{reference_record{&first}, reference_record{}}, {{3, {&first}}}};
         writer.writes = 0;
         srl::byte_buffer nested_bytes{};
-        const auto nested_bytes_status = srl::serialize(nested, nested_bytes, write_context);
+        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        const auto nested_bytes_status = srl::serialize(nested, nested_bytes, srl::srl_context{write_context, recorder});
         check(!nested_bytes_status && writer.writes == 3, "nested conversion repeated or omitted");
         nested_record nested_copy{};
         const auto nested_copy_status = srl::deserialize(nested_bytes.span(), nested_copy, read_context);
@@ -482,7 +490,7 @@ namespace conversion_tests {
         writer.writes = 0;
         srl::byte_buffer nested_destination;
         nested_destination.resize(nested_bytes.size());
-        check(!srl::serialize(nested, nested_destination.span(), write_context)
+        check(!srl::serialize(nested, nested_destination.span(), srl::srl_context{write_context, recorder})
               && writer.writes == 3 && nested_destination == nested_bytes,
               "nested span serialization repeated conversion");
 
@@ -500,7 +508,7 @@ namespace conversion_tests {
         reference_bundle::writes = 0;
         writer.writes = 0;
         srl::byte_buffer converted_bytes{};
-        const auto converted_bytes_status = srl::serialize(converted, converted_bytes, write_context);
+        const auto converted_bytes_status = srl::serialize(converted, converted_bytes, srl::srl_context{write_context, recorder});
         check(!converted_bytes_status && writer.writes == 1 && reference_bundle::writes == 1,
               "conversion within SrlTy repeated or lost context");
         converted_nested_record converted_copy{};
@@ -510,7 +518,7 @@ namespace conversion_tests {
 
         reference_record array[] = {{&first}, {nullptr}};
         srl::byte_buffer array_bytes{};
-        const auto array_bytes_status = srl::serialize(array, array_bytes, write_context);
+        const auto array_bytes_status = srl::serialize(array, array_bytes, srl::srl_context{write_context, recorder});
         check(!array_bytes_status, "context root array pack failed");
         reference_record array_copy[2]{};
         check(!srl::deserialize(array_bytes.span(), array_copy, read_context)

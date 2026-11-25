@@ -2,24 +2,53 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <utility>
 #include <expected>
 #include <optional>
 #include <span>
 
 #include "../schema/model.hpp"
-#include "wire_parse.hpp"
+#include "wire_document.hpp"
 
 namespace srl::detail {
+    // A successful measurement and an unchanged source bound all reservations.
+    class encoding_output {
+        std::span<std::byte> remaining_;
+        std::size_t position_{};
+        bool schema_only_;
+
+    public:
+        explicit encoding_output(std::span<std::byte> destination, bool schema_only) noexcept : remaining_(destination), schema_only_(schema_only) {}
+
+        [[nodiscard]] bool schema_only() const noexcept { return schema_only_; }
+
+        void copy(std::span<const std::byte> bytes) {
+            std::memcpy(take(bytes.size()).data(), bytes.data(), bytes.size());
+        }
+
+        [[nodiscard]] std::size_t position() const noexcept { return position_; }
+
+        [[nodiscard]] std::span<std::byte> take(std::size_t size) {
+            auto bytes = remaining_.first(size);
+            remaining_ = remaining_.subspan(size);
+            position_ += size;
+            return bytes;
+        }
+
+        template<std::size_t Size>
+        [[nodiscard]] std::span<std::byte, Size> take() {
+            return take(Size).template first<Size>();
+        }
+    };
+
     consteval std::optional<id_type> diagnostic_id(const schema_node &node) {
         return node.field_id();
     }
 
-    consteval szt record_content_offset(schema_kind kind, std::size_t fields) {
-        return entry_head_wire_size + (kind == schema_kind::stream ? 0 : fields * entry_mapping_wire_size);
-    }
 
-    inline error validate_entry_type(const entry_view &entry, entry_kind kind, type_hash_type wire_type) {
+    template<typename Entry>
+    inline error validate_entry_type(const Entry &entry, entry_kind kind, type_hash_type wire_type) {
         if (entry.head().kind() != kind) {
             return fail(error_code::entry_kind_mismatch, std::nullopt, 11);
         }
@@ -44,55 +73,32 @@ namespace srl::detail {
 
     // One complete group establishes a checked stride. Only the first group
     // exceeding either wire limit is walked, preserving the failing slot ID.
-    inline std::expected<szt, error> measure_fixed_slots(std::size_t count, std::span<const szt> extents) {
-        if (count == 0) { return entry_head_wire_size; }
-        szt first = entry_head_wire_size;
+    inline std::expected<szt, error> measure_fixed_slots(std::size_t count, std::span<const szt> extents, szt prefix = entry_head_wire_size) {
+        if (count == 0) { return prefix; }
+        szt first = prefix;
         for (std::size_t i = 0; i != extents.size(); ++i) {
-            if (auto status = append_encoded_size(first, extents[i], entry_mapping_wire_size, static_cast<id_type>(i)); status) {
+            if (auto status = append_encoded_size(first, extents[i], 0, static_cast<id_type>(i)); status) {
                 return std::unexpected{status};
             }
         }
-        const auto stride = first - entry_head_wire_size;
-        const auto size_groups = (maximum_entry_size - entry_head_wire_size) / stride;
+        const auto stride = first - prefix;
+        const auto size_groups = stride == 0 ? maximum_entry_size : (maximum_entry_size - prefix) / stride;
         const auto mapping_groups = entry_metadata::max_mapping_count / extents.size();
         const auto groups = std::min<szt>(count, std::min<szt>(size_groups, mapping_groups));
-        szt size = entry_head_wire_size + groups * stride;
+        szt size = prefix + groups * stride;
         if (groups == count) { return size; }
         for (std::size_t i = 0; i != extents.size(); ++i) {
             const auto id = static_cast<id_type>(groups * extents.size() + i);
             if (id == entry_metadata::max_mapping_count) {
                 return std::unexpected{fail(error_code::too_many_mappings, id)};
             }
-            if (auto status = append_encoded_size(size, extents[i], entry_mapping_wire_size, id); status) {
+            if (auto status = append_encoded_size(size, extents[i], 0, id); status) {
                 return std::unexpected{status};
             }
         }
         std::unreachable();
     }
 
-    inline std::expected<field_view, error> next_stream_field(
-        const entry_view &entry, szt &cursor, szt extent, type_hash_type wire_type, bool has_header = false) {
-        const auto remaining = entry.content().subspan(cursor);
-        const auto offset = entry.content_offset() + cursor;
-        szt size = extent;
-        // A malformed nested header still determines the original diagnostic
-        // and slice boundary, even when its valid schema has a fixed width.
-        if (extent == std::dynamic_extent || has_header) {
-            if (remaining.size() < entry_head_wire_size) {
-                return std::unexpected{fail(error_code::truncated_entry_header, std::nullopt, offset)};
-            }
-            size = read_trivial<entry_head>(remaining).size;
-            if (size < entry_head_wire_size) {
-                return std::unexpected{fail(error_code::invalid_entry_size, std::nullopt, offset)};
-            }
-        }
-        if (size > remaining.size()) {
-            return std::unexpected{fail(error_code::payload_out_of_bounds, std::nullopt, offset)};
-        }
-        cursor += size;
-        return field_view{.id = 0, .wire_type = wire_type,
-            .offset = offset, .bytes = remaining.first(static_cast<std::size_t>(size))};
-    }
 
     constexpr duplicate_policy resolve_duplicates(schema_duplicates mode, duplicate_policy inherited) {
         return mode == schema_duplicates::inherit ? inherited

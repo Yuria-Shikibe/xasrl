@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "annotation_targets.hpp"
 #include "model.hpp"
 #include "wire_contract.hpp"
 #include "../codec/reflected.hpp"
@@ -192,6 +193,16 @@ namespace srl::detail {
             const auto index = nodes.size();
             nodes.emplace_back(std::nullopt);
             const auto type = seed.type;
+#if defined(SRL_VALIDATE_ANNOTATION_TARGETS) && SRL_VALIDATE_ANNOTATION_TARGETS
+            validate_type_annotation_targets(recursively_dealias(type), path);
+#endif
+            const auto type_inline = annotation_count(type, ^^tag::inline_mapping);
+            const auto field_inline = seed.binding.is_field()
+                ? annotation_count(seed.binding.field().entity, ^^tag::inline_mapping) : 0;
+            const bool forced_inline = type_inline != 0 || field_inline != 0;
+            if (type_inline > 1 || field_inline > 1) {
+                reject(schema_error::conflicting_annotations, type, "duplicate inline_mapping");
+            }
             if (annotation_count(type, ^^tag::bypass_validation) > 1) {
                 reject(schema_error::conflicting_annotations, type, "duplicate bypass_validation");
             }
@@ -200,6 +211,7 @@ namespace srl::detail {
                 reject(issue.reason, type, issue.detail);
             }
             if (seed.forced) {
+                if (forced_inline) { reject(schema_error::conflicting_annotations, type, "inline_mapping requires a composite value"); }
                 nodes[index] = build_forced_leaf(seed);
                 return index;
             }
@@ -229,6 +241,7 @@ namespace srl::detail {
                 }
             }
             if (facts.leaf) {
+                if (forced_inline) { reject(schema_error::conflicting_annotations, type, "inline_mapping requires a composite value"); }
                 nodes[index] = build_codec_leaf(seed, facts);
                 return index;
             }
@@ -248,15 +261,14 @@ namespace srl::detail {
                     : (seq_count == 1 ? field_mode::automatic_record : field_mode::explicit_record), children);
                 nodes[index] = node;
             }
+            nodes[index]->inline_mapping = forced_inline;
             ancestors.pop_back();
             return index;
         }
 
         static consteval schema_node_storage finish_leaf(const schema_seed &seed, schema_extent extent,
                                                           const schema_leaf &leaf) {
-            const auto layout = leaf.layout();
-            const auto fields = layout ? layout->fields() : std::span<const object_field>{};
-            return {seed.type, leaf_wire_type(seed.type, extent, fields), extent, seed.binding,
+            return {seed.type, leaf_wire_type(seed.type, extent, leaf.layout().fields()), extent, seed.binding,
                     schema_kind::leaf, {.leaf = leaf}};
         }
 
@@ -265,8 +277,8 @@ namespace srl::detail {
             std::vector<object_field> fields;
             collect_object_fields(type, {}, 0, fields, path, seed.validation);
             const auto extent = schema_extent::fixed(std::meta::size_of(type));
-            return finish_leaf(seed, extent, {leaf_strategy::forced, leaf_representation::forced, true,
-                {.object = make_object_layout(type, std::move(fields), false)}});
+            return finish_leaf(seed, extent, {leaf_strategy::forced, leaf_representation::forced,
+                make_object_layout(type, std::move(fields), false)});
         }
 
         [[noreturn]] consteval void reject_automatic_leaf(std::meta::info type) {
@@ -290,7 +302,7 @@ namespace srl::detail {
             const auto strategy = facts.strategy == leaf_strategy::scalar_checked && seed.validation == validation_mode::unchecked
                 ? leaf_strategy::scalar_unchecked : facts.strategy;
             if (!facts.has_object_layout) {
-                return finish_leaf(seed, extent, {strategy, facts.representation, false, {.no_layout = {}}});
+                return finish_leaf(seed, extent, {strategy, facts.representation});
             }
             // Validate before entering the codec's separate constant initializer, so
             // inspection can report the enclosing schema path.
@@ -299,7 +311,7 @@ namespace srl::detail {
             const auto layout = strategy == leaf_strategy::object
                 ? make_object_layout(type, std::move(fields), facts.representation == leaf_representation::segmented)
                 : *std::meta::extract<const object_layout *>(std::meta::substitute(^^codec_object_layout, {type}));
-            return finish_leaf(seed, extent, {strategy, facts.representation, true, {.object = layout}});
+            return finish_leaf(seed, extent, {strategy, facts.representation, layout});
         }
 
         consteval schema_node_storage build_container(const schema_seed &seed, const schema_type_facts &facts, std::vector<std::size_t> &children) {
@@ -329,12 +341,12 @@ namespace srl::detail {
                     reject(schema_error::missing_default_constructor, facts.second);
                 }
             }
-            auto stride = schema_extent::fixed(entry_mapping_wire_size).scaled_by(facts.group);
+            auto stride = schema_extent::fixed(0);
             for (auto child: children) {
                 stride += nodes[child]->encode_extent;
             }
             const auto payload = facts.count == std::dynamic_extent
-                ? stride.scaled_by_dynamic_count() : stride.scaled_by(facts.count);
+                ? schema_extent::dynamic() : stride.scaled_by(facts.count);
             const auto extent = schema_extent::fixed(entry_head_wire_size) + payload;
             const schema_container container{edges.size(), facts.count, shape, seed.duplicates};
             const auto hash = composite_wire_type(container.wire_kind(), children);
@@ -370,9 +382,7 @@ namespace srl::detail {
                     }
                 }
             }
-            auto encode_extent = schema_extent::fixed(entry_head_wire_size)
-                + (stream ? schema_extent::fixed(0)
-                          : schema_extent::fixed(entry_mapping_wire_size).scaled_by(children.size()));
+            auto encode_extent = schema_extent::fixed(entry_head_wire_size);
             for (auto child: children) {
                 encode_extent += nodes[child]->encode_extent;
             }
@@ -418,6 +428,9 @@ namespace srl::detail {
             const bool stream = context.stream();
             const bool automatic = context.automatic();
             const bool serialized = automatic || facts.fields == 1;
+            if (annotation_count(entity, ^^tag::inline_mapping) != 0 && (!serialized || facts.transient != 0)) {
+                reject(schema_error::conflicting_annotations, entity, "inline_mapping requires a serialized field");
+            }
 
             if (facts.validation_bypasses > 1
                 || (facts.validation_bypasses != 0 && (!serialized || facts.transient != 0))) {

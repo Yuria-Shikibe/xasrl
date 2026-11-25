@@ -16,7 +16,7 @@ namespace srl {
         none, invalid_schema, unsupported_type, conflicting_annotations, duplicate_field_id,
         field_id_overflow, recursive_type, invalid_conversion, invalid_object_representation,
         extent_overflow, mapping_limit, missing_default_constructor, unsupported_entity,
-        invalid_fallback,
+        invalid_fallback, invalid_annotation_target,
     };
 
     struct schema_issue {

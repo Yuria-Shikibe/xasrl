@@ -26,7 +26,7 @@ namespace {
     void check_generated_validation() {
         constexpr auto schema = srl::schema(^^T).tree;
         constexpr auto node = schema.value_index();
-        constexpr auto layout = schema[node].leaf().layout().value();
+        constexpr auto layout = schema[node].leaf().layout();
         static_assert(!layout.fields().empty());
         srl::serialization_context context;
         srl::byte_buffer bytes;
@@ -35,7 +35,7 @@ namespace {
             using type = typename[:field.type:];
             if constexpr (std::same_as<type, bool> || std::is_enum_v<type>) {
                 auto malformed = bytes;
-                constexpr auto position = srl::detail::entry_head_wire_size + field.wire_offset;
+                constexpr auto position = srl::detail::document_header_size + srl::detail::entry_head_wire_size + field.wire_offset;
                 malformed[position] = std::byte{0xff};
                 T target{};
                 const auto status = srl::deserialize(malformed.span(), target, context);
@@ -60,13 +60,12 @@ namespace {
         srl::byte_buffer bytes;
         ASSERT_FALSE(srl::serialize(forced{}, bytes, context));
         constexpr auto tree = srl::schema(^^forced).tree;
-        constexpr auto layout = tree[tree.value_index(), 0].leaf().layout().value();
+        constexpr auto layout = tree[tree.value_index(), 0].leaf().layout();
         static_assert(layout.fields().size() == 3);
         static_assert(layout.fields()[2].element_count == 2);
-        const auto entry = srl::detail::parse_entry(bytes.span());
-        ASSERT_TRUE(entry);
+        const auto entry = srl_test::open_document(bytes.span());
         constexpr auto state_offset = layout.fields()[1].wire_offset;
-        const auto position = entry->at(0).offset + state_offset;
+        const auto position = entry.at(0).offset + state_offset;
         bytes[position] = std::byte{0xff};
         forced out;
         const auto status = srl::deserialize(bytes.span(), out, context);

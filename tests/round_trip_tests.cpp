@@ -63,17 +63,12 @@ namespace srl_test {
         srl::byte_buffer vector_bytes{};
         const auto vector_bytes_status = srl::serialize(vector, vector_bytes, default_context);
         require(!vector_bytes_status, "Vec2 packing failed");
-        require(vector_bytes.size()
-                    == srl::detail::entry_head_wire_size
-                       + 2 * srl::detail::entry_mapping_wire_size
-                       + sizeof(float) * 2,
-                "Vec2 auto_seq size is incorrect");
-        require((get_u32(vector_bytes, 8) & 0xffffffu) == 2, "Vec2 auto_seq mapping count is incorrect");
-        require(std::to_integer<std::uint8_t>((vector_bytes)[11])
-                    == std::to_underlying(srl::entry_kind::record),
-                "auto_seq entry classification is incorrect");
-        require(get_u32(vector_bytes, 16) == 0 && get_u32(vector_bytes, 32) == 1,
-                "auto_seq did not assign field ids from zero");
+        const auto vector_doc = open_document(vector_bytes.span());
+        require(vector_bytes.size() == srl::serialized_size<Vec2>() && vector_doc.entry.head().mapping_count() == 2,
+                "Vec2 auto_seq size or field count is incorrect");
+        require(vector_doc.entry.head().kind() == srl::entry_kind::record
+                && vector_doc.at(0).id == 0 && vector_doc.at(1).id == 1,
+                "auto_seq entry classification or IDs are incorrect");
         Vec2 vector_copy{};
         const auto vector_copy_status = srl::deserialize(vector_bytes.span(), vector_copy, default_context);
         require(!vector_copy_status
@@ -113,12 +108,11 @@ namespace srl_test {
         srl::byte_buffer automatic_bytes{};
         const auto automatic_bytes_status = srl::serialize(automatic, automatic_bytes, default_context);
         require(!automatic_bytes_status, "auto_seq packing failed");
-        require((get_u32(automatic_bytes, 8) & 0xffffffu) == 4,
+        const auto automatic_doc = open_document(automatic_bytes.span());
+        require(automatic_doc.entry.head().mapping_count() == 4,
                 "auto_seq transient member changed the field count");
-        require(get_u32(automatic_bytes, 16) == 0
-                && get_u32(automatic_bytes, 32) == 1
-                && get_u32(automatic_bytes, 48) == 4
-                && get_u32(automatic_bytes, 64) == 5,
+        require(automatic_doc.at(0).id == 0 && automatic_doc.at(1).id == 1
+                && automatic_doc.at(2).id == 4 && automatic_doc.at(3).id == 5,
                 "auto_seq base/member ids or explicit id continuation are incorrect");
         AutoSequenceRecord automatic_copy{};
         const auto automatic_copy_status = srl::deserialize(automatic_bytes.span(), automatic_copy, default_context);
@@ -164,9 +158,9 @@ namespace srl_test {
         srl::byte_buffer padded_bytes{};
         const auto padded_bytes_status = srl::serialize(padded, padded_bytes, default_context);
         require(!padded_bytes_status
-                && padded_bytes.size() == srl::detail::entry_head_wire_size + sizeof(PaddedLeaf),
+                && padded_bytes.size() == (srl::detail::document_header_size + srl::detail::entry_head_wire_size) + sizeof(PaddedLeaf),
                 "padding-enabled leaf size is incorrect");
-        const auto padded_payload = padded_bytes.span().subspan(srl::detail::entry_head_wire_size);
+        const auto padded_payload = padded_bytes.span().subspan((srl::detail::document_header_size + srl::detail::entry_head_wire_size));
         require(padded_payload[0] == std::byte{7}
                 && padded_payload[1] == std::byte{0}
                 && padded_payload[2] == std::byte{0}
@@ -202,7 +196,7 @@ namespace srl_test {
         const auto transient_bytes_status = srl::serialize(transient, transient_bytes, default_context);
         require(!transient_bytes_status
                 && transient_bytes.size()
-                       == srl::detail::entry_head_wire_size + sizeof(std::uint32_t) * 4,
+                       == (srl::detail::document_header_size + srl::detail::entry_head_wire_size) + sizeof(std::uint32_t) * 4,
                 "transient leaf size is incorrect");
         TransientLeaf transient_copy{};
         const auto transient_copy_status = srl::deserialize(transient_bytes.span(), transient_copy, default_context);

@@ -53,7 +53,7 @@ int main() {
                  srl::schema_view<^^PlayerProfile>{});
 
     srl::byte_buffer bytes{};
-    const auto bytes_status = srl::serialize(source, bytes, context);
+    const auto bytes_status = srl::serialize(source, bytes, srl::srl_context{context});
     if (bytes_status) {
         throw std::runtime_error(std::string{srl::message(bytes_status.code)});
     }
@@ -67,4 +67,18 @@ int main() {
     const auto level = srl::number_to_string(copy.level);
     const auto size = srl::number_to_string(bytes.size());
     std::println("{} reached level {} ({} serialized bytes)", copy.name, level.view(), size.view());
+
+    const std::vector<std::vector<int>> nested{{1, 2}, {}, {3}};
+    if (const auto status = srl::serialize(nested, bytes, context); status) {
+        throw std::runtime_error(std::string{srl::message(status.code)});
+    }
+    const auto embedded_size = bytes.size();
+    if (const auto status = srl::serialize<srl::schema_storage::schema_only>(nested, bytes, context); status) {
+        throw std::runtime_error(std::string{srl::message(status.code)});
+    }
+    std::vector<std::vector<int>> restored;
+    if (const auto status = srl::deserialize(bytes.span(), restored, context); status) {
+        throw std::runtime_error(std::string{srl::message(status.code)});
+    }
+    std::println("Nested sequence: {} embedded bytes, {} schema-only bytes", embedded_size, bytes.size());
 }

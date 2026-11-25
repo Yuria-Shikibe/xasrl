@@ -6,11 +6,13 @@
 #include <functional>
 #include <meta>
 
+#include "annotation_target.hpp"
 #include "conversion.hpp"
 #include "detail/default_snapshot.hpp"
 #include "types.hpp"
 
 namespace srl {
+
     namespace defaults {
         /**
          * Value-initializes the field with `T{}` (element-wise for arrays).
@@ -147,13 +149,16 @@ namespace srl {
     }
 
     namespace tag {
+
+        struct [[=target::compound | target::data]] inline_mapping {};
+
         /**
          * Makes one record field optional and applies `Policy` to its in-memory value
          * only when its ID is absent, not when the encoded value is invalid.
          * Stream entries and members inside leaf objects have no independent field IDs.
          */
         template<detail::default_policy Policy = defaults::initialized>
-        struct fallback {
+        struct [[=target::data]] fallback {
             constexpr explicit fallback(Policy = {}) {}
 
             template<typename T>
@@ -173,7 +178,7 @@ namespace srl {
          * Includes a member or direct base in a record under an explicit wire ID.
          * Overrides the current ID in `auto_seq`; ignored inside `auto_stream`.
          */
-        struct field {
+        struct [[=target::data]] field {
             id_type id{};
 
             constexpr auto operator<=>(const field &) const noexcept = default;
@@ -185,56 +190,59 @@ namespace srl {
          * On a type, enables automatic object layout or a custom leaf codec; on a
          * member or base, forces object-representation encoding for that field only.
          */
-        struct leaf {
+        struct [[=target::compound | target::data]] leaf {
             /** Allows non-unique object representations; encoded padding is still zeroed. */
             bool allow_non_unique_presentation{false};
         };
 
-        /** Treats an enum as flags: any subset of the allowed bits, including zero, is valid. */
-        struct bit_flag {
-            /** A zero mask infers the allowed bits by OR-ing all enumerators; the result must be nonzero. */
-            std::uint64_t mask{};
-        };
-
-        /**
-         * Skips built-in bool, enum and flag value checks in the annotated serialized subtree.
-         * The caller must supply valid C++ representations; structural and custom codec checks still run.
-         */
-        struct bypass_validation{};
 
         /**
          * Builds a record with IDs starting at zero, visiting direct bases before members
          * in declaration order. Skips `transient`; an explicit `field` ID resets the sequence.
          */
-        struct auto_seq {};
+        struct [[=target::compound]] auto_seq {};
 
         /**
          * Encodes non-transient direct bases and members in declaration order, without
          * record field IDs or an offset table. On a member or base, overrides that subobject only.
          */
-        struct auto_stream {};
+        struct [[=target::compound | target::data]] auto_stream {};
+
+        /**
+         * Excludes a field from `auto_seq`, `auto_stream` or an automatic leaf layout.
+         * Decoding leaves the excluded value unchanged; leaf layouts allow this only on members.
+         */
+        struct [[=target::data]] transient {};
+
+        /**
+         * Overrides the context's duplicate policy for a container field on decode.
+         * For converted fields, applies to the storage container type.
+         */
+        struct [[=target::data]] container {
+            /** Deduplicate using the container's semantics, or reject duplicate keys or elements. */
+            duplicate_policy duplicates{duplicate_policy::deduplicate};
+        };
 
         /**
          * Permits raw pointer and member-pointer representations in object-layout encoding.
          * On a type, applies to its direct bases and members; on a field, applies only there.
          * It does not make addresses portable or valid across processes.
          */
-        struct bypass_pointer_check {};
+        struct [[=target::compound | target::data]] bypass_pointer_check {};
 
         /**
-         * Excludes a field from `auto_seq`, `auto_stream` or an automatic leaf layout.
-         * Decoding leaves the excluded value unchanged; leaf layouts allow this only on members.
+         * Skips built-in bool, enum and flag value checks in the annotated serialized subtree.
+         * The caller must supply valid C++ representations; structural and custom codec checks still run.
          */
-        struct transient {};
+        struct [[=target::compound | target::enum_type | target::data]] bypass_validation {};
 
-        /**
-         * Overrides the context's duplicate policy for a container field on decode.
-         * For converted fields, applies to the storage container type.
-         */
-        struct container {
-            /** Deduplicate using the container's semantics, or reject duplicate keys or elements. */
-            duplicate_policy duplicates{duplicate_policy::deduplicate};
+
+        /** Treats an enum as flags: any subset of the allowed bits, including zero, is valid. */
+        struct [[=target::enum_type]] bit_flag {
+            /** A zero mask infers the allowed bits by OR-ing all enumerators; the result must be nonzero. */
+            std::uint64_t mask{};
         };
+
     }
 
     namespace detail {

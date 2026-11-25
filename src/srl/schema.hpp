@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "schema/build.hpp"
+#include "schema/mapping_layout.hpp"
 
 namespace srl {
     consteval bool has_serialized_fields(std::meta::info type) {
@@ -58,8 +59,8 @@ namespace srl {
         template<typename T>
         inline constexpr schema schema_for{^^T};
 
-        template<typename T>
-        inline constexpr schema_extent root_encode_extent = schema_for<T>.root_node().encode_extent();
+        template<typename T, schema_storage Mode = schema_storage::embedded>
+        inline constexpr schema_extent root_encode_extent = mapping_layout_for<schema_for<T>.tree>.extent(0, Mode == schema_storage::schema_only);
     }
 
     [[nodiscard]] consteval schema_issue inspect_schema(std::meta::info type) {

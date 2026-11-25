@@ -8,5 +8,5 @@
 #include "number_to_string.hpp"
 #include "schema.hpp"
 #include "serialization.hpp"
-#include "storage/serialization_workspace.hpp"
+#include "storage/encoding_recorder.hpp"
 #include "wire.hpp"

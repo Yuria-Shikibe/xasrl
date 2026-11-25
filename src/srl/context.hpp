@@ -98,4 +98,38 @@ namespace srl {
             return handler;
         }
     };
+
+    class encoding_recorder;
+
+    //TODO
+    //
+    // Borrows the settings and, when supplied, the recorder for a serialize call.
+    template<bool HasRecorder = false>
+    class srl_context;
+
+    template<>
+    class srl_context<false> {
+        const serialization_context &settings_;
+
+    public:
+        srl_context(const serialization_context &settings) noexcept : settings_(settings) {}
+
+        [[nodiscard]] const serialization_context &settings() const noexcept { return settings_; }
+    };
+
+    template<>
+    class srl_context<true> {
+        const serialization_context &settings_;
+        encoding_recorder &recorder_;
+
+    public:
+        srl_context(const serialization_context &settings, encoding_recorder &recorder) noexcept
+            : settings_(settings), recorder_(recorder) {}
+
+        [[nodiscard]] const serialization_context &settings() const noexcept { return settings_; }
+        [[nodiscard]] encoding_recorder &recorder() const noexcept { return recorder_; }
+    };
+
+    srl_context(const serialization_context &) -> srl_context<false>;
+    srl_context(const serialization_context &, encoding_recorder &) -> srl_context<true>;
 }

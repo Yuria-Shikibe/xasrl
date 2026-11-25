@@ -287,7 +287,7 @@ namespace srl::detail {
         }
         const szt row_bytes = szt{1} << exponent;
 
-        const auto fields = node.leaf().layout()->fields();
+        const auto fields = node.leaf().layout().fields();
         std::array<memory_span, maximum_memory_spans> spans{};
         std::size_t span_count = 0;
         for (const auto &field: fields) {
@@ -450,15 +450,16 @@ namespace srl::detail {
 
         if (node.kind() == schema_kind::leaf) {
             // Object layout rows are parts of one leaf payload, not separate wire nodes.
+            const auto fields = node.leaf().layout().fields();
             if (node.leaf().representation != leaf_representation::codec
-                && node.leaf().layout() && !node.leaf().layout()->fields().empty()
+                && !fields.empty()
                 && (std::meta::is_class_type(node.type()) || std::meta::is_array_type(node.type()))) {
                 out.append(" {\n");
                 if (options.memory_layout) {
                     append_schema_memory_layout(out, node, options.memory_layout_exponent,
                                                 depth + 1);
                 } else {
-                    append_schema_layout(out, node.leaf().layout()->fields(), depth + 1, options);
+                    append_schema_layout(out, fields, depth + 1, options);
                 }
                 append_schema_indent(out, depth);
                 out.push('}');

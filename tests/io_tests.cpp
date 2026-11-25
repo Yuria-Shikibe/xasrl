@@ -60,8 +60,11 @@ TEST(StorageIo, RoundTripAndValidation) {
 TEST(StorageIo, ChunkedRoundTripAndShortIo) {
     srl::byte_buffer bytes;
     bytes.resize(2 * srl::detail::io_chunk_size + 37, std::byte{0x5a});
-    srl::detail::write_trivial(bytes.span(), srl::entry_head{
-        .size = bytes.size(), .metadata = {0, srl::entry_kind::leaf},
+    srl::detail::write_trivial(bytes.span(), srl::detail::wire_v5_magic);
+    srl::detail::write_trivial(bytes.span().subspan(4), std::uint32_t{});
+    srl::detail::write_trivial(bytes.span().subspan(8), srl::szt{});
+    srl::detail::write_trivial(bytes.span().subspan(srl::detail::document_header_size), srl::entry_head{
+        .size = bytes.size() - srl::detail::document_header_size, .metadata = {0, srl::entry_kind::leaf},
     });
     const auto path = std::filesystem::temp_directory_path() / "srl_chunked_test.bin";
     ASSERT_FALSE(srl::write_block(path, bytes.span()));

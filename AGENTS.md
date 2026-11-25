@@ -9,8 +9,10 @@ registration, macros, or duplicated serialization boilerplate.
 * This repo is under DEV, no forward compatibility guarantees are required.
 
 - `src/srl/`: serialization library, currently centered on `core.hpp`.
-- `src/main.cpp`: executable experiments and usage examples.
-- `xmake.lua`: authoritative build configuration; current target: `srl`.
+- `main.cpp`: executable experiments and usage examples.
+- `xmake.lua`: authoritative build configuration; `srl` is the header-only
+  library, `srl.example` is the default executable, and `srl.tests` and
+  `srl.benchmarks` are opt-in executables.
 - `build/`, `.xmake/`, and `compile_commands.json`: generated outputs, not sources
   to edit manually.
 
@@ -30,15 +32,15 @@ Run build commands from the repository root in PowerShell:
 
 ```powershell
 xmake                         # Incremental build of default targets
-xmake -b srl            # Explicit build of the executable
-xmake -b -r srl         # Force rebuild; -r means rebuild, not run
+xmake -b srl.example          # Explicit build of the example
+xmake -b -r srl.example       # Force rebuild; -r means rebuild, not run
 ```
 
 Clean generated build outputs with:
 
 ```powershell
 xmake clean                   # Remove default targets' build outputs
-xmake clean srl          # Clean only this target
+xmake clean srl.example      # Clean only the example
 ```
 
 Build successfully before using an existing executable because it may be stale.

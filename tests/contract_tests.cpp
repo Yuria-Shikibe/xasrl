@@ -1,3 +1,4 @@
+#include "test_support.hpp"
 #include "srl/diagnostics.hpp"
 #include "srl/serialization.hpp"
 
@@ -59,12 +60,12 @@ namespace {
     static_assert(issue.path[2] == ^^invalid_inner::pointer);
     static_assert(srl::schema_diagnostic(^^invalid_outer).contains("child"));
     static_assert(srl::schema_diagnostic(^^invalid_outer).contains("pointer"));
-    static_assert(!std::is_aggregate_v<srl::detail::entry_view>);
-    static_assert(!std::is_default_constructible_v<srl::detail::entry_view>);
-    static_assert(!std::is_constructible_v<srl::detail::entry_view, srl::entry_head,
+    static_assert(!std::is_aggregate_v<srl::detail::defined_entry>);
+    static_assert(!std::is_default_constructible_v<srl::detail::defined_entry>);
+    static_assert(!std::is_constructible_v<srl::detail::defined_entry, srl::entry_head,
         std::span<const std::byte>, std::span<const std::byte>, srl::szt>);
     static_assert(std::is_const_v<std::remove_reference_t<decltype(
-        std::declval<srl::detail::entry_view &>().head())>>);
+        std::declval<srl::detail::defined_entry &>().head())>>);
 
     TEST(Flags, RootRecordAndObjectRepresentation) {
         const srl::serialization_context context;
@@ -115,36 +116,29 @@ namespace {
         const srl::serialization_context context;
         srl::byte_buffer bytes;
         ASSERT_FALSE(srl::serialize(record{permissions::write}, bytes, context));
-        srl::detail::write_trivial(bytes.span().subspan(24), srl::szt{1});
+        const auto document = srl_test::open_document(bytes.span());
+        srl_test::set_u64(bytes, document.inline_definition_offset() + srl::detail::definition_header_size + 8, 0);
         record target{permissions::read};
         const auto status = srl::deserialize(bytes.span(), target, context);
-        EXPECT_EQ(status.code, srl::error_code::invalid_mapping_order);
+        EXPECT_EQ(status.code, srl::error_code::invalid_payload_shape);
         EXPECT_EQ(target.value, permissions::read);
 
         auto check_empty = [&]<typename T>(T target) {
             ASSERT_FALSE(srl::serialize(target, bytes, context));
+            const auto doc = srl_test::open_document(bytes.span());
+            const auto content_end = bytes.size();
             bytes.push_back(std::byte{0});
-            srl::detail::write_trivial(bytes.span(), static_cast<srl::szt>(bytes.size()));
-            const auto parsed = srl::detail::parse_entry(bytes.span());
-            ASSERT_FALSE(parsed);
-            EXPECT_EQ(parsed.error().code, srl::error_code::trailing_bytes);
-            EXPECT_EQ(parsed.error().offset, 16u);
+            srl_test::set_u64(bytes, doc.root_offset(), bytes.size() - doc.root_offset());
+            const auto parsed = srl::detail::validate_document(bytes.span());
+            EXPECT_EQ(parsed.code, srl::error_code::trailing_bytes);
+            EXPECT_EQ(parsed.offset, content_end);
             EXPECT_EQ(srl::deserialize(bytes.span(), target, context).code, srl::error_code::trailing_bytes);
         };
         check_empty(empty_record{});
         check_empty(std::vector<int>{});
         check_empty(std::map<int, int>{});
 
-        // Zero-width custom leaf payloads may legitimately share offsets.
-        bytes.resize(48);
-        srl::detail::write_trivial(bytes.span(), srl::entry_head{.size = 48,
-            .metadata = {2, srl::entry_kind::record}});
-        srl::detail::write_trivial(bytes.span().subspan(16), srl::entry_mapping{.id = 0});
-        srl::detail::write_trivial(bytes.span().subspan(32), srl::entry_mapping{.id = 1});
-        const auto zero_width = srl::detail::parse_entry(bytes.span());
-        ASSERT_TRUE(zero_width);
-        EXPECT_TRUE(zero_width->at(0).bytes.empty());
-        EXPECT_TRUE(zero_width->at(1).bytes.empty());
+
 
         ASSERT_FALSE(srl::serialize(std::vector<std::array<int, 0>>{{}, {}}, bytes, context));
         std::vector<std::array<int, 0>> restored;

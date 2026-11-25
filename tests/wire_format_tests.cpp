@@ -1,3 +1,5 @@
+#include <memory_resource>
+
 #include "test_support.hpp"
 
 namespace srl_test {
@@ -8,28 +10,20 @@ namespace srl_test {
             .second = 0x55667788,
         }, bytes, default_context);
         require(!bytes_status, "Pair packing failed");
-        require(bytes.size() == 56, "Pair entry size changed");
-        require(get_u64(bytes, 0) == 56, "entry head size is incorrect");
-        require((get_u32(bytes, 8) & 0xffffffu) == 2, "mapping count is incorrect");
-        require(std::to_integer<std::uint8_t>((bytes)[11])
-                    == std::to_underlying(srl::entry_kind::record),
-                "record entry classification is incorrect");
+        const auto doc = open_document(bytes.span());
+        require(bytes.size() == 84 && doc.root_offset() == 16, "Pair document size changed");
+        require(doc.entry.head().size == 68 && doc.entry.head().mapping_count() == 2, "wrong entry prefix");
+        require(doc.entry.head().kind() == srl::entry_kind::record, "record classification is incorrect");
         constexpr auto pair_wire_type = srl::schema(^^Pair).value_node().wire_type();
-        require(get_u32(bytes, 12) == pair_wire_type,
-                "entry type hash is incorrect");
         constexpr auto integer_wire_type = srl::schema(^^int).value_node().wire_type();
-        require(get_u32(bytes, 16) == 1 && get_u32(bytes, 20) == integer_wire_type && get_u64(bytes, 24) == 0,
-                "first mapping is incorrect");
-        require(get_u32(bytes, 32) == 2 && get_u32(bytes, 36) == integer_wire_type && get_u64(bytes, 40) == 4,
-                "second mapping is incorrect");
-        require(get_u32(bytes, 48) == 0x11223344u
-                && get_u32(bytes, 52) == 0x55667788u,
-                "content is not canonical little endian");
-
-        auto entry = srl::detail::parse_entry(bytes.span());
-        require(entry.has_value() && entry->head().mapping_count() == 2,
-                "Pair mapping table did not parse");
-
+        const auto first = doc.at(0);
+        const auto second = doc.at(1);
+        require(doc.entry.head().wire_type == pair_wire_type && first.id == 1 && second.id == 2,
+                "entry type or field IDs are incorrect");
+        require(first.wire_type == integer_wire_type && second.wire_type == integer_wire_type,
+                "field types are incorrect");
+        require(first.offset == 76 && second.offset == 80 && get_u32(bytes, first.offset) == 0x11223344u
+                && get_u32(bytes, second.offset) == 0x55667788u, "payload is not canonical little endian");
         const auto direct_size = srl::serialized_size(Pair{.first = 0x11223344, .second = 0x55667788}, default_context);
         require(direct_size == bytes.size(),
                 "serialized_size did not match serialization output");
@@ -64,7 +58,7 @@ namespace srl_test {
         srl::byte_buffer vector_bytes{};
         const auto vector_bytes_status = srl::serialize(vector, vector_bytes, default_context);
         require(!vector_bytes_status, "vector packing failed");
-        require(std::to_integer<std::uint8_t>((vector_bytes)[11])
+        require(std::to_integer<std::uint8_t>((vector_bytes)[27])
                     == std::to_underlying(srl::entry_kind::sequence),
                 "single-value container classification is incorrect");
         std::vector<int> vector_copy{};
@@ -133,8 +127,13 @@ namespace srl_test {
 
         const std::vector<std::vector<int>> nested{{1, 2}, {}, {3, 4, 5}};
         srl::byte_buffer nested_bytes{};
-        const auto nested_bytes_status = srl::serialize(nested, nested_bytes, default_context);
+        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        const auto nested_bytes_status = srl::serialize(nested, nested_bytes, srl::srl_context{default_context, recorder});
         require(!nested_bytes_status, "nested container packing failed");
+        const auto nested_doc = open_document(nested_bytes.span());
+        require(nested_bytes.size() == 212 && nested_doc.at(0).bytes.size() == 52
+                && nested_doc.at(1).bytes.size() == 44 && nested_doc.at(2).bytes.size() == 56,
+                "nested container entry lengths are incorrect");
         std::vector<std::vector<int>> nested_copy{};
         const auto nested_copy_status = srl::deserialize(nested_bytes.span(), nested_copy, default_context);
         require(!nested_copy_status && nested_copy == nested,
@@ -162,10 +161,10 @@ namespace srl_test {
 
         const std::map<int, std::string> map{{1, "one"}, {2, "two"}};
         srl::byte_buffer map_bytes{};
-        const auto map_bytes_status = srl::serialize(map, map_bytes, default_context);
+        const auto map_bytes_status = srl::serialize(map, map_bytes, srl::srl_context{default_context, recorder});
         require(!map_bytes_status, "map packing failed");
-        require((get_u32(map_bytes, 8) & 0xffffffu) == map.size() * 2
-                && std::to_integer<std::uint8_t>((map_bytes)[11]) == std::to_underlying(srl::entry_kind::map),
+        require((get_u32(map_bytes, 24) & 0xffffffu) == map.size() * 2
+                && std::to_integer<std::uint8_t>((map_bytes)[27]) == std::to_underlying(srl::entry_kind::map),
                 "map key/value slots were not grouped in pairs");
         std::unordered_map<int, std::string> unordered_copy{};
         const auto unordered_copy_status = srl::deserialize(map_bytes.span(), unordered_copy, default_context);
@@ -197,11 +196,13 @@ namespace srl_test {
     }
 
     void test_container_entry_size_limit() {
-        const std::array<srl::szt, 1> extent{
-            srl::detail::maximum_entry_size - srl::detail::entry_mapping_wire_size};
-        const auto status = srl::detail::measure_fixed_slots(1, extent);
-        require(!status && status.error().code == srl::error_code::entry_too_large,
-                "container encoding accepted an entry too large for the wire size field");
+        constexpr auto maximum_payload = srl::detail::maximum_entry_size - srl::detail::entry_head_wire_size;
+        const std::array<srl::szt, 1> exact{maximum_payload};
+        const auto boundary = srl::detail::measure_fixed_slots(1, exact);
+        require(boundary && *boundary == srl::detail::maximum_entry_size, "wire size boundary was rejected");
+        const std::array<srl::szt, 1> overflow{maximum_payload + 1};
+        require_error(srl::detail::measure_fixed_slots(1, overflow), srl::error_code::entry_too_large,
+                      "container encoding accepted an oversized entry");
     }
 
     void test_malformed_input() {
@@ -209,8 +210,10 @@ namespace srl_test {
         const auto pair_bytes_status = srl::serialize(Pair{.first = 10, .second = 20}, pair_bytes, default_context);
         require(!pair_bytes_status, "Pair packing failed");
 
+        const auto document = open_document(pair_bytes.span());
+        const auto definition_rows = document.inline_definition_offset() + srl::detail::definition_header_size;
         auto oversized = pair_bytes;
-        set_u64(oversized, 0, oversized.size() + 1);
+        set_u64(oversized, document.root_offset(), document.entry.head().size + 1);
         Pair rejected_value_6{};
         require_error(srl::deserialize(oversized.span(), rejected_value_6, default_context),
                       srl::error_code::invalid_entry_size,
@@ -224,28 +227,28 @@ namespace srl_test {
                       "trailing entry bytes were accepted");
 
         auto bad_reserved = pair_bytes;
-        bad_reserved[20] = std::byte{2};
+        set_u32(bad_reserved, definition_rows + 4, 0);
         Pair rejected_value_8{};
         require_error(srl::deserialize(bad_reserved.span(), rejected_value_8, default_context),
                       srl::error_code::type_mismatch,
                       "invalid field wire type was accepted");
 
         auto bad_classification = pair_bytes;
-        bad_classification[11] = std::byte{};
+        bad_classification[document.root_offset() + 11] = std::byte{};
         Pair rejected_value_9{};
         require_error(srl::deserialize(bad_classification.span(), rejected_value_9, default_context),
                       srl::error_code::invalid_entry_classification,
                       "invalid entry classification was accepted");
 
         auto duplicate = pair_bytes;
-        set_u32(duplicate, 32, 1);
+        set_u32(duplicate, definition_rows + srl::detail::definition_row_size, 1);
         Pair rejected_value_10{};
         require_error(srl::deserialize(duplicate.span(), rejected_value_10, default_context),
                       srl::error_code::invalid_mapping_order,
                       "duplicate field id was accepted");
 
         auto bad_address = pair_bytes;
-        set_u64(bad_address, 24, std::numeric_limits<srl::szt>::max());
+        set_u64(bad_address, definition_rows + 8, bad_address.size());
         Pair rejected_value_11{};
         require_error(srl::deserialize(bad_address.span(), rejected_value_11, default_context),
                       srl::error_code::payload_out_of_bounds,
@@ -260,7 +263,7 @@ namespace srl_test {
         const auto bool_bytes_status = srl::serialize(true, bool_bytes, default_context);
         require(!bool_bytes_status, "bool packing failed");
         auto invalid_bool = bool_bytes;
-        invalid_bool[srl::detail::entry_head_wire_size] = std::byte{2};
+        invalid_bool.span().back() = std::byte{2};
         bool rejected_value_13{};
         require_error(srl::deserialize(invalid_bool.span(), rejected_value_13, default_context),
                       srl::error_code::invalid_bool,
@@ -270,7 +273,7 @@ namespace srl_test {
         const auto enum_bytes_status = srl::serialize(activity::sleeping, enum_bytes, default_context);
         require(!enum_bytes_status, "enum packing failed");
         auto invalid_enum = enum_bytes;
-        invalid_enum[srl::detail::entry_head_wire_size] = std::byte{7};
+        invalid_enum.span().back() = std::byte{7};
         activity rejected_value_14{};
         require_error(srl::deserialize(invalid_enum.span(), rejected_value_14, default_context),
                       srl::error_code::invalid_enum_value,
@@ -288,17 +291,17 @@ namespace srl_test {
         const auto map_bytes_status = srl::serialize(std::map<int, int>{{1, 2}, {3, 4}}, map_bytes, default_context);
         require(!map_bytes_status, "map packing failed");
         auto incomplete_pair = map_bytes;
-        incomplete_pair[8] = std::byte{3};
+        incomplete_pair[24] = std::byte{3};
         std::map<int, int> rejected_value_16{};
         require_error(srl::deserialize(incomplete_pair.span(), rejected_value_16, default_context),
                       srl::error_code::invalid_container_shape,
                       "incomplete key/value mapping group was accepted");
 
         auto wrong_container_id = map_bytes;
-        set_u32(wrong_container_id, 16, 4);
+        set_u32(wrong_container_id, open_document(map_bytes.span()).inline_definition_offset() + 8, 4);
         std::map<int, int> rejected_value_17{};
         require_error(srl::deserialize(wrong_container_id.span(), rejected_value_17, default_context),
-                      srl::error_code::invalid_container_shape,
+                      srl::error_code::invalid_mapping_order,
                       "non-contiguous container mapping ids were accepted");
     }
 

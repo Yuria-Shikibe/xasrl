@@ -213,9 +213,8 @@ namespace validation_tests {
         fields out;
         ASSERT_FALSE(srl::deserialize(bytes.span(), out, context));
         EXPECT_EQ(std::to_underlying(out.trusted), 7);
-        const auto entry = srl::detail::parse_entry(bytes.span());
-        ASSERT_TRUE(entry);
-        const auto offset = entry->at(1).offset;
+        const auto entry = srl_test::open_document(bytes.span());
+        const auto offset = entry.at(1).offset;
         bytes[offset] = std::byte{8};
         const auto failure = srl::deserialize(bytes.span(), out, context);
         EXPECT_EQ(failure.code, srl::error_code::invalid_enum_value);

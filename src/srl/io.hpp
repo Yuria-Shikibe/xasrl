@@ -14,7 +14,7 @@
 #include <span>
 #include <system_error>
 
-#include "detail/wire_parse.hpp"
+#include "detail/wire_document.hpp"
 #include "storage/byte_buffer.hpp"
 #include "limits.hpp"
 #include "detail/staged_file.hpp"
@@ -56,9 +56,7 @@ namespace srl {
     [[nodiscard]] inline error write_block(
         const std::filesystem::path &path,
         std::span<const std::byte> entry_bytes) {
-        if (auto entry = detail::parse_entry(entry_bytes); !entry) {
-            return entry.error();
-        }
+        if (auto status = detail::validate_document(entry_bytes); status) { return status; }
 
         auto output = detail::staged_file::create(path);
         if (!output) { return output.error(); }
@@ -122,9 +120,7 @@ namespace srl {
 
         entry_bytes.resize_uninitialized(static_cast<std::size_t>(entry_size));
         if (auto status = detail::read_bytes(input, entry_bytes.span()); status) { return std::unexpected{status}; }
-        if (auto entry = detail::parse_entry(entry_bytes.span()); !entry) {
-            return std::unexpected{entry.error()};
-        }
+        if (auto status = detail::validate_document(entry_bytes.span()); status) { return std::unexpected{status}; }
         return entry_bytes;
     }
 

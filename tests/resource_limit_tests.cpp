@@ -29,7 +29,8 @@ namespace {
         const std::vector<std::vector<int>> source{{1, 2, 3}, {4, 5, 6}};
         srl::serialization_context context;
         srl::byte_buffer bytes;
-        ASSERT_FALSE(srl::serialize(source, bytes, context));
+        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        ASSERT_FALSE(srl::serialize(source, bytes, srl::srl_context{context, recorder}));
         context.config.limits.max_input_bytes = bytes.size() - 1;
         std::vector<std::vector<int>> out{{99}};
         EXPECT_EQ(srl::deserialize(bytes.span(), out, context).code, srl::error_code::resource_limit_exceeded);

@@ -97,9 +97,9 @@ namespace serialization_api_tests {
         srl::deserialize(bytes, out);
     };
 
-    static_assert(srl::serialized_size<int>() == srl::detail::entry_head_wire_size + sizeof(int));
-    static_assert(srl::serialized_size<Record>() == 16 + 2 * 16 + 2 * sizeof(int));
-    static_assert(srl::serialized_size(Stream{}, context) == 16 + 2 * sizeof(int));
+    static_assert(srl::serialized_size<int>() == 16 + srl::detail::entry_head_wire_size + sizeof(int));
+    static_assert(srl::serialized_size<Record>() == 16 + 16 + 4 + 8 + 2 * 16 + 2 * sizeof(int));
+    static_assert(srl::serialized_size(Stream{}, context) == 16 + 16 + 4 + 8 + 2 * 16 + 2 * sizeof(int));
     static_assert(srl::serialized_size<std::array<int, 2>>() == srl::serialized_size<int[2]>());
     static_assert(srl::serialized_size(FixedConversion{}, context) == srl::serialized_size<Subset>());
     static_assert(std::same_as<decltype(srl::serialized_size<Record>()), srl::szt>);
@@ -170,7 +170,7 @@ namespace serialization_api_tests {
         const std::string text = "hello";
         const auto size = srl::serialized_size(text, context);
         ASSERT_TRUE(size);
-        constexpr auto text_extent = 16 + 5 * (16 + sizeof(char));
+        constexpr auto text_extent = 60 + 5 * sizeof(char);
         std::array<std::byte, text_extent> fixed{};
         EXPECT_EQ(*size, fixed.size());
         ASSERT_FALSE(srl::serialize(text, std::span{fixed}, context));

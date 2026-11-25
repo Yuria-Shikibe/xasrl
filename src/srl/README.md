@@ -1,10 +1,10 @@
-# srl
+# SRL 接口与格式参考
 
-`srl` 是一个使用 C++26 静态反射实现的游戏对象序列化实验。
+项目简介、构建命令和最小示例见[根目录 README](../../README.md)
 
 ## 格式与兼容性契约
 
-**本库不提供跨编译器兼容保证，也不提供同一编译器不同版本之间的兼容保证。**
+**本库不提供跨编译器兼容保证，也不提供同一编译器不同版本之间的兼容保证，对于非标准布局类型的leaf标注需要谨慎使用**
 用户需要自行处理工具链升级、数据迁移和旧数据读取；相同 storage version 或 wire 类型标识
 不构成跨工具链兼容承诺。对象布局、基础类型宽度和反射类型名称都可能受工具链、ABI、
 编译选项影响。目前只支持 8-bit byte 和小端目标，不进行字节序转换。
@@ -16,10 +16,9 @@
 - wire 类型标识为 32 位哈希，存在碰撞可能，不是身份认证或完整性校验。record 的根标识
   不包含字段集合，字段逐项校验；容器按元素类型匹配，不按容器实现匹配。枚举和自定义
   leaf codec 使用去别名后的类型名称；flags 枚举还包含允许位掩码。
-- entry 使用紧凑布局：有 mapping 时第一项偏移必须为 0，后续偏移非递减，最后一个
-  payload 延伸到 content 末尾。零长度 payload 可以共享偏移；没有 mapping 的 record、
-  sequence 和 map 必须没有 content。leaf 和 stream 的 content 由各自 codec 校验。
-- parse_entry 只验证当前 entry 的结构、边界和 mapping，不递归验证未知字段的语义。
+- v5 将映射定义与实例数据分离：定义中的字段 ID、wire 类型和定界规则由 schema 生成；
+  每个实例按定义顺序存放 payload，不再保存字段偏移。读取验证当前 entry 的边界，
+  不递归验证被跳过的未知字段的语义。
   read_block / write_block 也只有字节结构验证；目标类型相关检查发生在 deserialize。
   已验证视图只能由解析函数创建；它借用输入，使用期间输入必须存活且内容不变。
 - deserialize 的错误和异常不改变原目标；serialize 开始编码后允许输出部分更新。
@@ -28,20 +27,7 @@
   不合并旧元素状态。fallback{} 使用字段类型 T{}，不会重新执行宿主成员初始化器。
   defaults::automatic{} 显式复用编译期默认宿主对象的成员值，无法取得时拒绝 schema
 - 对象表示 leaf 要求满足布局约束；允许 padding 时写零。绕过指针检查仅保存地址表示，
-  用户负责地址有效性。当前 storage version 为 4，未实现压缩、CRC 或版本迁移。
-
-## 构建与验证
-
-使用现有 xmake GCC 16 MinGW 环境，不额外配置工具链：
-
-```powershell
-xmake -b srl
-xmake run srl
-xmake -b srl.tests
-xmake run srl.tests
-```
-
-必须构建成功后再运行对应程序。`srl.tests` 是非默认 GoogleTest 目标。
+  用户负责地址有效性。当前 storage version 为 5，未实现压缩、CRC 或版本迁移。
 
 ## 文件结构
 
@@ -60,9 +46,9 @@ xmake run srl.tests
 - `schema_visualization.hpp`：基于 schema 树生成结构文本。
 - `detail/reflection_facts.hpp`：共享反射事实、注解计数、指针分析和 leaf 元数据校验。
 - `detail/reflection.hpp`：模板反射访问、对象表示范围与自动 leaf 资格。
-- `detail/codec.hpp`：按节点类型集中组织编解码；`value_codec`、`field_codec` 和 `root_codec` 通过嵌套 `encode_plan` 管理编码缓存，通过静态 `decode` 解码。
+- `detail/codec.hpp`：按节点类型集中组织编解码；编码计划保留类型有界的状态，逐元素计划统一写入 `storage/encoding_recorder.hpp`，解码仍走静态 `decode`。
 - `detail/utility.hpp`：哈希和 trivial byte 工具。
-- `detail/wire_parse.hpp`：已验证 entry 视图与 wire 解析。
+- `detail/wire_document.hpp`：文档、定义和顺序 entry 解析。
 - `storage/byte_buffer.hpp`：序列化结果使用的字节缓冲。
 - `serialization.hpp`：`serialize`、`deserialize` 与 `serialized_size` 公共 API。
 - `transaction.hpp`：保留 allocator 的事务副本与无异常提交定制。
@@ -122,7 +108,7 @@ if (auto status = srl::deserialize(bytes.span(), restored, context); status) {
 根原生数组采用元素级复制和交换。未序列化状态沿用各 codec 的规则，不合并动态容器
 中的旧元素；读取新对象时由调用方先默认构造目标即可。
 
-定长类型可以只根据类型在编译期取得完整根 entry 的尺寸，包括 header 和 mapping：
+定长类型可以只根据类型在编译期取得完整文档的尺寸，包括文档头、映射定义（如果写入）和根 entry：
 
 ```cpp
 constexpr auto size = srl::serialized_size<FixedRecord>();
@@ -135,8 +121,9 @@ if (auto status = srl::serialize(value, std::span{bytes}, context); status) {
 `serialized_size<T>()` 是 `consteval noexcept`，直接返回 `srl::szt`，仅对定长类型可用。
 统一的 `serialized_size(value, context)` 调用对定长类型选择 `constexpr noexcept` 重载，
 同样直接返回尺寸，不执行转换、不绑定 handler；尺寸可知不代表实际编码一定成功。
-变长类型的该重载返回 `std::expected<srl::szt, srl::error>`，可能调用转换及 handler，
-因此不声明 `noexcept`。分配外部缓冲时先检查测量结果，再提供精确长度的 span。
+变长类型返回 `std::expected<srl::szt, srl::error>`，可能调用转换及 handler。需要逐元素记录的
+变长类型须调用 `serialized_size(recorder, value, context)`。分配外部缓冲时先检查测量结果，
+再提供精确长度的 span。
 
 span 的 `Extent` 从实参推导，类型编码尺寸与 span 长度均已知且不匹配时在编译期拒绝，
 否则在写入前检查实际长度。反序列化不能以目标类型的编码尺寸限制输入长度，因为
@@ -148,11 +135,22 @@ span 的 `Extent` 从实参推导，类型编码尺寸与 span 长度均已知�
 
 1. 游戏运行时对象：可能包含指针、句柄、缓存等运行时状态。
 2. 游戏元数据对象：脱离运行时环境后仍有意义的数据。
-3. 已序列化内存对象：`entry_head + storage_mapping[] + content`。
-4. 已存储磁盘块：`storage_head + serialized entry`。
+3. 已序列化内存对象：`document_header + definitions + root_entry`。
+4. 已存储磁盘块：`storage_head + 完整内存文档`
 
 库实现第 2、3、4 层，并支持字段级运行时表示与持久化表示转换。转换的业务语义由
 游戏代码提供，库负责调用、上下文传递和字节编解码；未标记字段不会进入二进制。
+
+## Tag 的适用位置
+
+SRL 的 tag 声明用 `[[=...]]` 附上 `srl::tag::target` 位掩码，类似 Java 的 `@Target`。
+例如，`auto_stream` 标有 `compound | member_field | base_class`，分别表示类类型声明、
+非静态数据成员和直接基类；`bit_flag` 标有 `enum_type`，表示枚举类型声明，区别于枚举项 `enumerator`。
+
+工具可用 `std::meta::annotations_of_with_type(^^srl::tag::auto_stream, ^^srl::tag::target)`
+查询，并用 `std::meta::extract<srl::tag::target>` 读取掩码。
+默认只提供位置提示；`srl.tests` 用 `SRL_VALIDATE_ANNOTATION_TARGETS=1` 开启编译期位置检查，
+违规会报告 `invalid_annotation_target`。具体类型、注解组合及模式限制仍由原有 schema 规则校验。
 
 ## 反射记录
 
@@ -219,10 +217,10 @@ automatic 在编译期构造声明该成员的 `Owner{}`，取得构造完成后
 automatic 同样只处理缺失字段，不能用于 stream、leaf 内部成员或 transient 成员，
 也不会把存在但损坏的数据替换成默认值
 
-错误的 `offset` 是相对根 entry 的字节偏移；嵌套 codec 每层只累计一次 payload 起点。
+对文档字节定位的错误，其 `offset` 相对内存文档起点；嵌套 codec 每层只累计一次 payload 起点。
 `decode` 不传递预算、字段 ID 或偏移参数；调用方仅在解码失败时补充错误位置。
 `error.id` 是 `std::optional<id_type>`，没有 ID 的结构错误与真实字段 ID `0` 明确区分。
-自定义 codec 返回相对自身输入的偏移，库负责转换为根偏移。
+自定义 codec 返回相对自身输入的偏移，库负责转换为文档偏移。
 `error.system_error` 仅在系统调用失败时包含 `std::error_code`；成功路径不初始化系统错误分类。
 `schema(^^T).tree`、对象布局和枚举策略只保存合法元数据，不再包含 `valid` 标志。
 构建器遇到错误立即抛出编译期异常，停止遍历；只有成功后才固化元数据数组。
@@ -294,12 +292,9 @@ struct [[=srl::tag::auto_stream{}]] State
 `leaf`、`container`、`transient` 或 `bypass_pointer_check` 同时使用。
 与 `conversion_tag` 同时使用时，stream 模式应用于转换后的持久化类型。
 
-wire 使用 16 字节 `entry_head`，`kind() = entry_kind::stream (2)`、
-`mapping_count() = 0`，随后直接拼接各实体 payload。
-叶节点字段按 codec 固定长度读取，复合字段通过自己的 entry header 确定长度，
-容器保留原有元素映射。每个 stream 相比具有相同 payload 的 `auto_seq` 每字段减少
-16 字节。使用小端字节序和 storage version 4，不兼容旧版本。
-
+wire v5 的 stream 仍按声明顺序写出，`kind() = entry_kind::stream (2)`，
+`mapping_count() = 0`。定义写入模式会存放顺序定义；schema-only 模式从编译期 schema 取得定义。
+两种模式都不为字段写入偏移表。
 stream header 记录由字段顺序、名称和 wire 类型生成的布局指纹；同长度字段换序会被拒绝。
 截断、越界及尾随字节返回可恢复错误。
 没有未知字段跳过或缺失字段补齐。stream 自身的错误以字节偏移定位，嵌套 record
@@ -397,10 +392,10 @@ context.register_handler(srl::handler_key<AssetReferenceKey>(), handler);
   保证存活，不能指向临时 `SrlTy` 或解码临时副本。
 - `deserialize` 使用临时副本加交换，错误或异常不会改变目标；不公开允许部分更新的解码入口。
   handler 自身在所有失败路径中也必须保持参数类型的不变量。
-- 所有运行时对象级入口都必须显式传入上下文：`serialize(value, bytes, context)`、
-  `deserialize(bytes, out, context)` 与 `serialized_size(value, context)`。
-  即使 schema 不需要 handler，也不会隐式创建临时上下文；纯类型查询 `serialized_size<T>()`
-  不读取对象或上下文。
+- `serialize` 的参数顺序固定为源对象、目标缓冲区、`srl_context`。需要逐元素记录时，
+  用 `srl_context{context, recorder}` 同时传入原有 handler、运行时配置和记录器；其余类型
+  可以传 `srl_context{context}` 或直接传原有上下文。`deserialize` 和 `serialized_size`
+  继续使用原有签名；纯类型查询 `serialized_size<T>()` 不读取对象或上下文。
 - 运行时策略属于上下文，而不是额外的 options 参数。例如根容器重复项策略通过
   `context.config.duplicates` 配置；同一个上下文因此完整描述一次操作所需的 handler 与策略。
 - 一次保存先创建递归编码计划，持有转换结果，再使用同一结果测量与写入；普通字段不额外复制。
@@ -446,7 +441,7 @@ auto located = srl::format_error(status, "profile.active");
 // invalid_bool path=profile.active id=0 offset=123
 ```
 
-输出包含错误码、可选 ID、根 entry 字节偏移，以及存在时的系统错误分类、数值和消息。
+输出包含错误码、可选 ID、字节偏移，以及存在时的系统错误分类、数值和消息。
 调用方已知路径时可以传入第二个参数；函数不会仅凭 ID 猜测嵌套字段路径。
 格式化过程可以分配和抛异常，不影响原有编解码错误契约。
 
@@ -615,74 +610,39 @@ struct Record {
 
 ## 内存格式
 
-线格式直接使用受支持小端目标的对象表示。header 和 mapping 是固定布局的
-trivially copyable 类型，完整复制其对象表示；leaf content 使用编译期成员布局，
-padding 写零，transient 不写入目标。因此只有显式允许 padding，或类型具有独一对象表示时，复合叶节点类型才会
-把对象表示复制到文件；结构化的逐实体编码由 record/`auto_seq` 承担。
+v5 使用小端字节序。每份文档的 16 字节前缀由 `u32 magic`（字节为 `SRL5`）、
+`u32 definition_count`、`u64 schema_fingerprint` 组成。默认模式指纹为零，前缀之后是
+按 ID 顺序排列的共享定义，再之后是一个根 entry。共享 ID 从 1 开始，只在本份文档内有效。
+
+- 定义由 `u32 row_count + u32 kind` 和各行组成。每行是 `u32 field_id + u32 wire_type + u64 leaf_width`；
+  变长的复合子项用全一宽度表示，应从子项 entry 头读取长度。record 的行按字段 ID 排序，
+  stream 按声明顺序，sequence 和 map 分别只定义一个和两个槽位。
+- entry 头仍是 16 字节：`u64 entry_size`、低 24 位为槽位数且高 8 位为 kind 的 `u32 metadata`、
+  `u32 wire_type`。record 的槽位数等于定义的行数，sequence / map 使用实例槽位数，
+  leaf 和 stream 的槽位数字段为零。默认模式的复合 entry 在头之后写 `u32 definition_id`，
+  为零时紧跟内联定义；再按定义顺序拼接 payload。根 leaf 有 entry 头，子 leaf 只有 payload。
+- `[[=srl::tag::inline_mapping{}]]` 可用于复合类型或字段，强制每次出现时写内联定义，
+  后代仍独立决策。叶子、未序列化或 transient 字段不接受此注解；转换字段按存储类型判断。
+  自动布局仅在编译期能保证复用至少两次时共享。相同定义按完整字节判等；
+  动态容器的重复项不计入保证次数。运行时直接复制编译好的定义，不重建字段映射。
+- 显式选择 `srl::schema_storage::schema_only` 时，定义数量为 `0xffffffff`，
+  文档头包含完整 wire schema 指纹；不写共享区、内联定义或定义 ID。读端自动识别此模式，
+  指纹不匹配即拒绝，不能投影到不同 schema。指纹只用于格式匹配，不是内容校验或身份认证。
 
 ```cpp
-using szt = std::uint64_t;           // 序列化长度和字节偏移的统一类型。
-
-struct entry_head {
-    szt size;                       // 整个 entry 的字节数。
-    entry_metadata metadata;        // 低 24 位 count，高 8 位 kind。
-    std::uint32_t wire_type;         // schema 生成的 wire 契约标识。
-};
-
-struct entry_mapping {
-    std::uint32_t id;
-    std::uint32_t wire_type;         // 此字段的 wire 契约标识。
-    szt offset;                     // 相对 content 起点的字节偏移。
-};
+constexpr auto mode = srl::schema_storage::schema_only;
+auto status = srl::serialize<mode>(value, bytes, context);
+// 编译期固定长度：srl::serialized_size<T, mode>()
+// 先准备后写：srl::prepared_serialization<T, mode>::prepare(value, context)
 ```
 
-线格式中的 `entry_head` 固定为 16 字节：
-
-| Offset | Size | 内容 |
-| --- | ---: | --- |
-| 0 | 8 | entry 总大小 |
-| 8 | 3 | mapping 数量，最多 16,777,215 |
-| 11 | 1 | entry kind |
-| 12 | 4 | wire 契约标识 |
-
-`entry_metadata` 使用显式移位和掩码，不依赖 C++ 位域布局。构造时验证计数不超过
-24 位，通过 `entry_head::mapping_count()` 和 `kind()` 读取。ID 与类型 hash 仍为 32 位。
-
-`entry_kind` 只编码互斥的实际格式：
-
-| 值 | 类型 | 内容 |
-| --- | --- | --- |
-| 1 | leaf | 无 mapping，叶节点 payload |
-| 2 | stream | 无 mapping，按 schema 顺序拼接 payload |
-| 3 | record | 按字段 ID 索引 |
-| 4 | sequence | 元素 ID 从零连续递增，每个元素一个 mapping |
-| 5 | map | 槽位 ID 从零连续递增，每个键值对两个 mapping |
-
-其余 kind 保留，当前读取时拒绝。map 的 mapping 数量必须为偶数，最多容纳
-8,388,607 个键值对。容器 traits 的 `mapping_group_size` 仅用于编译期，不再单独写入线格式。
-
-每个 mapping 固定为 16 字节，ID、wire_type、offset 位于偏移 0、4、8。
-wire_type 来自 `schema_node::wire_type`，编解码和元数据驱动测试共用同一值。mapping 按 ID 递增，
-字节偏移单调不减，content 按相同顺序紧密排列，无对齐缩放或填充。
-字段长度由下一 mapping 的偏移或 entry 结尾确定。
-
-wire 契约由编译期元数据生成：整数按符号和宽度区分，浮点按宽度区分；record 按字段 ID
-逐项检查，因此仍允许未知字段与兼容子集。容器身份取决于元素 wire 类型而不是容器实现，
-保留 vector／list 等互读。stream 加入字段顺序与名称。枚举、自定义 codec 仍使用去别名后的
-类型名作为名义身份，当前不承诺不同编译器的这些名称一致。32 位标识用于匹配格式，
-不是内容校验和或认证机制。
-
-大小计算、`serialized_size` 的结果和 `error.offset` 统一使用 `srl::szt`。
-线格式可表达超过 4 GiB 的 entry，实际操作仍受 `size_t`、缓冲区容量及可用内存限制；
-大小计算为 `std::dynamic_extent` 保留全一哨兵值。静态 mapping 数量超限使 schema 无效，
-动态超限返回 `too_many_mappings`；尺寸溢出返回 `entry_too_large`。
-
-非叶节点字段的 content 是一个完整嵌套 entry；叶节点字段的 content 是直接二进制 payload。
-根叶节点对象使用 mapping 数量为零的 entry，整个 content 都是叶节点 payload。
+默认模式仍允许 record 兼容投影和未知字段跳过，但解码要顺序扫描前面的字段，不再按实例偏移直接跳转。
+容器上限仍为 24 位槽位数；测长、字节偏移和尺寸使用 `srl::szt`。编码使用完整的可写缓冲区，
+不提供不可回寻的流式 I/O。磁盘读取拒绝旧版本。
 
 ## 磁盘块
 
-磁盘文件包含一个 storage header 和一个完整根 entry：
+磁盘文件包含一个 storage header 和一份完整的 v5 内存文档（含文档头、可选共享定义及根 entry）：
 
 ```cpp
 struct storage_head {
@@ -692,7 +652,7 @@ struct storage_head {
 };
 ```
 
-当前版本为 `4`，压缩标记必须为 `0`。不兼容旧布局，读取时拒绝旧版本。
+当前版本为 `5`，压缩标记必须为 `0`。不兼容旧布局，读取时拒绝旧版本。
 文件 I/O 分块读写，避免单次调用的 `streamsize` 限制，但序列化仍使用完整内存缓冲区。
 Windows 写入先通过 `CREATE_NEW` 创建同目录唯一临时文件，完成写入并调用
 `FlushFileBuffers` 后关闭句柄，再用同卷 rename 替换目标。写入或替换失败不会先截断
@@ -742,7 +702,7 @@ constexpr auto value = description.tree.value_index();
 constexpr auto first = description.tree[value, 0];
 constexpr auto field_id = first.record_field().id;
 constexpr auto stored_type = first.type(); // std::meta::info
-constexpr auto encoded_size = description.root_node().encode_extent();
+constexpr auto encoded_size = srl::detail::root_encode_extent<Profile>;
 ```
 
 节点是只读编译期视图。`kind()` 决定可用的形状数据，例如 `leaf()` 提供 codec 和可选对象布局，
@@ -772,20 +732,23 @@ schema 不保存对象、转换结果或运行期 handler；这些状态仍由�
 codec 与编码计划直接从 schema 节点读取字段 ID、wire type 和尺寸，不通过子计划转发这些元数据。
 非模板 `detail/codec_support.hpp` 负责公共 entry 类型检查、stream 切片、尺寸累加和重复策略选择；
 实际对象操作、计划存储布局和成功/失败状态类型仍由模板生成。
-容器元素是否需要编码缓存由实际准备状态决定：leaf、无转换且子树无动态状态的定长
-record/stream 与固定容器使用空槽位计划。定长、无准备副作用的 sized range 以数量与静态步长
-做一次有界乘加测长，不遍历元素；非 sized range、动态子树与转换仍按需遍历并缓存
-只有真正需要分配计划缓存的操作才构造 workspace，缓存从构造时绑定其 PMR resource
+容器元素是否需要编码记录由 schema 决定：只有需要保留字段转换结果的元素才留下逐项状态。
+定宽、无转换的 sized range 以数量与静态步长做有界乘加测长，不需要遍历元素。
+准备阶段计算整个文档的编码长度；写出游标按定义顺序在缓冲区中推进，并回填变长 entry 的长度，
+不写实例字段偏移。动态容器写出前用 `size()` 取得当前层数量；非 sized range 额外遍历当前层计数，
+不重测子树。转换记录按深度优先顺序追加和读取；普通字段的转换结果仍保留在所属计划内
 同质原生数组的对象布局存储一次元素描述、数量及步长，复制和验证使用普通循环，
-不按元素个数实例化模板；wire 指纹仍按 v4 的原标量顺序计算
+不按元素个数实例化模板
 
-### 复用准备结果
+### 控制记录分配、复用准备结果
 
-需要先测长再编码到外部 span 时，可以使用同一个准备计划，避免两次调用业务转换
+无转换的嵌套容器（如 `std::vector<std::vector<int>>`）不需要记录器。容器元素有字段转换
+需要缓存时，必须显式传入记录器。先测长再编码到外部 span 时，可以使用同一个准备计划，
+避免两次调用业务转换
 
 ```cpp
-srl::serialization_workspace workspace;
-auto prepared = srl::prepared_serialization<T>::prepare(workspace, value, context);
+srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+auto prepared = srl::prepared_serialization<T>::prepare(recorder, value, context);
 if (!prepared) { return prepared.error(); }
 std::vector<std::byte> output(prepared->size());
 return prepared->encode(std::span{output});
@@ -793,9 +756,17 @@ return prepared->encode(std::span{output});
 
 准备计划借用源，不是对象快照，工厂拒绝临时源。源及其引用的数据必须存活且保持不变，
 包括形状、元素顺序和转换依赖；输入不能与编码输出重叠
-workspace 必须比所有使用它的计划活得更久；计划销毁后才能 reset 或复用该资源
-计划可以移动，移动后的源计划只允许销毁。context 仅在准备时参与转换，不由计划保存
-只需要写出 byte_buffer 时，直接调用一次 serialize 即可，无需先调用 serialized_size
+
+同一个记录器一次只能服务一个需要记录的根计划，不可并发使用。记录器须比计划活得更久，
+传入的内存资源须比记录器活得更久。计划销毁时自动回收记录、保留内存块供下次使用；
+`retained_bytes()` 返回保留的块字节数，空闲时可调用 `release()` 归还这些块。记录器按需
+分配，首块至少 4 KiB，后续按倍数扩容且不移动已创建的记录。资源耗尽时
+分配异常照常传播。记录器只管理计划存储，不为输出或业务转换提供分配器
+
+计划可以移动，也可重复写出；移动后的源计划只允许销毁。context 仅在准备时参与转换，
+不由计划保存。直接写 `byte_buffer` 时调用
+`serialize(value, bytes, srl::srl_context{context, recorder})`，不必预先测长。
+`srl_context` 借用 `context` 和 `recorder`，不接管它们的生命周期
 
 ## Schema 可视化
 

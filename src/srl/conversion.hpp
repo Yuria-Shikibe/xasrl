@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <meta>
 
+#include "annotation_target.hpp"
+
 namespace srl {
     class serialization_context;
 
@@ -16,7 +18,7 @@ namespace srl {
         return &detail::identity_token<typename[:std::meta::remove_cvref(^^Tag):]>;
     }
 
-    struct conversion_tag {
+    struct [[=tag::target::member_field]] conversion_tag {
         std::meta::info target_type{};
         const void *handler_id{};
     };

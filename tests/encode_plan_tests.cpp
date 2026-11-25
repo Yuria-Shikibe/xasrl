@@ -1,5 +1,6 @@
 #include "test_support.hpp"
 
+#include <memory_resource>
 #include <type_traits>
 #include <vector>
 
@@ -16,30 +17,24 @@ namespace {
     template<typename T>
     using payload_plan = decltype(root_plan<T>::payload);
 
-    static_assert(std::is_empty_v<decltype(payload_plan<fixed_record>::size)>);
-    static_assert(std::is_empty_v<decltype(payload_plan<fixed_stream>::size)>);
-    static_assert(std::is_empty_v<decltype(root_plan<int>::size)>);
     static_assert(sizeof(payload_plan<fixed_record>) == 1);
     static_assert(sizeof(payload_plan<fixed_stream>) == 1);
-    // Identical empty size members in a nested root/payload need distinct addresses.
     static_assert(sizeof(root_plan<fixed_record>) <= 2);
     static_assert(sizeof(root_plan<int>) == 1);
-    using fixed_array_plan = payload_plan<std::array<int, 3>>;
-    static_assert(sizeof(fixed_array_plan) == 1);
-    static_assert(std::is_empty_v<decltype(fixed_array_plan::slot_count)>);
-    static_assert(fixed_array_plan{}.slot_count == 3);
-    static_assert(sizeof(decltype(payload_plan<std::vector<int>>::size)) == sizeof(srl::szt));
-    static_assert(sizeof(decltype(payload_plan<std::vector<int>>::slot_count)) == sizeof(std::uint32_t));
+    static_assert(std::is_empty_v<payload_plan<std::array<int, 3>>>);
+    static_assert(std::is_empty_v<payload_plan<std::vector<int>>>);
+    static_assert(std::is_empty_v<payload_plan<std::vector<std::vector<int>>>>);
+    static_assert(sizeof(root_plan<std::vector<int>>) == sizeof(srl::szt));
 
     TEST(EncodePlan, ConditionalSizesAndCountsPreserveWireData) {
         const srl::serialization_context context;
         auto round_trip = [&]<typename T>(const T &source) {
-            srl::serialization_workspace workspace;
-            root_plan<T> plan{workspace.resource()};
-            ASSERT_FALSE(plan.prepare(source, context, workspace.resource()));
+            srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+            const auto prepared = srl::prepared_serialization<T>::prepare(recorder, source, context);
+            ASSERT_TRUE(prepared);
             srl::byte_buffer bytes;
-            ASSERT_FALSE(srl::serialize(source, bytes, context));
-            EXPECT_EQ(static_cast<srl::szt>(plan.size), bytes.size());
+            bytes.resize(prepared->size());
+            ASSERT_FALSE(prepared->encode(bytes.span()));
             T restored{};
             ASSERT_FALSE(srl::deserialize(bytes.span(), restored, context));
             EXPECT_EQ(restored, source);
@@ -56,7 +51,6 @@ namespace {
     constexpr srl::schema tree(^^std::vector<Rect>);
     constexpr auto element = tree.tree.child_indices(tree.tree.value_index())[0];
     static_assert(!srl::detail::encoding_needs_cache(tree.tree, element));
-    static_assert(std::is_empty_v<srl::detail::container_slot_plans<tree.tree, element>>);
 
     struct [[=srl::tag::auto_seq{}]] many_fields {
         int a, b, c, d, e, f, g, h, i, j, k, l;

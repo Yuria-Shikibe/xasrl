@@ -58,16 +58,9 @@ namespace srl {
         leaf_strategy strategy;
         leaf_representation representation;
 
-        bool has_layout;
-        union {
-            detail::object_layout object;
-            std::monostate no_layout{};
-        };
+        detail::object_layout object{};
 
-        [[nodiscard]] consteval std::optional<detail::object_layout> layout() const {
-            if (has_layout) { return object; }
-            return std::nullopt;
-        }
+        [[nodiscard]] consteval detail::object_layout layout() const noexcept { return object; }
 
         [[nodiscard]] consteval bool scalar() const noexcept {
             return strategy == leaf_strategy::scalar_checked || strategy == leaf_strategy::scalar_unchecked;
@@ -141,6 +134,7 @@ namespace srl {
             schema_binding binding;
             schema_kind kind;
             schema_shape shape;
+            bool inline_mapping{};
 
             [[nodiscard]] consteval schema_extent decode_extent() const noexcept {
                 if (kind == schema_kind::leaf) { return encode_extent; }
@@ -172,6 +166,7 @@ namespace srl {
         friend class schema_tree;
 
     public:
+        [[nodiscard]] consteval bool inline_mapping() const noexcept { return storage_->inline_mapping; }
         [[nodiscard]] consteval schema_kind kind() const noexcept { return storage_->kind; }
         [[nodiscard]] consteval std::meta::info type() const noexcept { return storage_->type; }
         [[nodiscard]] consteval type_hash_type wire_type() const noexcept { return storage_->wire_type; }
@@ -217,6 +212,7 @@ namespace srl {
 
     public:
         static constexpr std::size_t root_index = 0;
+        [[nodiscard]] consteval std::size_t size() const noexcept { return nodes_.size(); }
 
         template<std::integral... Ordinals>
         [[nodiscard]] consteval schema_node operator[](

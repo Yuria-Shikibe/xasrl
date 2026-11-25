@@ -1,3 +1,5 @@
+#include <memory_resource>
+
 #include "test_support.hpp"
 
 namespace {
@@ -267,7 +269,8 @@ namespace {
 
         out.hp = 3;
         out.matrix[1][1] = 9;
-        ASSERT_FALSE(srl::serialize(out, bytes, context));
+        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        ASSERT_FALSE(srl::serialize(out, bytes, srl::srl_context{context, recorder}));
         automatic_target copy;
         ASSERT_FALSE(srl::deserialize(bytes.span(), copy, context));
         EXPECT_EQ(copy.hp, 3);

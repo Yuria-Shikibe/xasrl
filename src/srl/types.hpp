@@ -73,12 +73,6 @@ namespace srl {
         }
     };
 
-    struct entry_mapping {
-        id_type id{};
-        type_hash_type wire_type{};
-        szt offset{};
-    };
-
     static_assert(std::meta::is_standard_layout_type(^^storage_head)
                   && std::meta::is_trivially_copyable_type(^^storage_head)
                   && sizeof(storage_head) == 16);
@@ -90,12 +84,6 @@ namespace srl {
     static_assert(offsetof(entry_head, size) == 0);
     static_assert(offsetof(entry_head, metadata) == 8);
     static_assert(offsetof(entry_head, wire_type) == 12);
-    static_assert(std::meta::is_standard_layout_type(^^entry_mapping)
-                  && std::meta::is_trivially_copyable_type(^^entry_mapping)
-                  && sizeof(entry_mapping) == 16);
-    static_assert(offsetof(entry_mapping, id) == 0);
-    static_assert(offsetof(entry_mapping, wire_type) == 4);
-    static_assert(offsetof(entry_mapping, offset) == 8);
 
     enum class error_code : std::uint8_t {
         none,
@@ -108,6 +96,7 @@ namespace srl {
         invalid_entry_classification,
         entry_kind_mismatch,
         invalid_mapping_order,
+        invalid_mapping_reference,
         invalid_container_shape,
         duplicate_container_element,
         fixed_container_size_mismatch,

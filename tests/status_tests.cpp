@@ -1,3 +1,5 @@
+#include <memory_resource>
+
 #include "test_support.hpp"
 
 #include <concepts>
@@ -224,10 +226,11 @@ namespace status_tests {
     }
 
     TEST(Status, CachedConversionsAndEmptyContainers) {
+        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
         const std::array<Converted, 2> source{{{ConvertedValue{31}}, {ConvertedValue{42}}}};
         ConvertedValue::conversions = 0;
         std::array<std::byte, srl::serialized_size<decltype(source)>()> bytes{};
-        EXPECT_FALSE(srl::serialize(source, std::span{bytes}, default_context));
+        EXPECT_FALSE(srl::serialize(source, std::span{bytes}, srl::srl_context{default_context, recorder}));
         EXPECT_EQ(ConvertedValue::conversions, 2);
         std::array<Converted, 2> target{};
         EXPECT_FALSE(srl::deserialize(std::span{bytes}, target, default_context));
@@ -248,7 +251,7 @@ namespace status_tests {
         codec::fail = false;
         EXPECT_EQ(failure.code, srl::error_code::invalid_reference);
         EXPECT_EQ(failure.id, 0u);
-        EXPECT_EQ(failure.offset, 16u + 2 * 16u + 1u);
+        EXPECT_EQ(failure.offset, 61u);
         EXPECT_EQ(codec::writes, 1);
         ASSERT_FALSE(srl::serialize(source, bytes, default_context));
         std::vector<EncodeFailure> target;

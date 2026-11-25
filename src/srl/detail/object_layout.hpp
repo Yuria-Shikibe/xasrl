@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "../schema/annotation_targets.hpp"
 #include "reflection.hpp"
 #include "object_layout_model.hpp"
 #include "utility.hpp"
@@ -66,6 +67,9 @@ namespace srl::detail {
             const auto element = std::meta::remove_extent(type);
             const auto stride = std::meta::size_of(element);
             std::vector<object_field> elements;
+#if defined(SRL_VALIDATE_ANNOTATION_TARGETS) && SRL_VALIDATE_ANNOTATION_TARGETS
+            validate_type_annotation_targets(recursively_dealias(element), path);
+#endif
             collect_object_fields_impl(element, entity, 0, elements, path, mode);
             szt payload{};
             for (const auto &field: elements) { payload += field.payload_size; }
@@ -91,7 +95,13 @@ namespace srl::detail {
                     reject_schema(schema_error::invalid_object_representation, path, child,
                         "object representation does not support bit fields, references or virtual bases");
                 }
-                collect_object_fields_impl(std::meta::type_of(child), child,
+                const auto child_type = std::meta::type_of(child);
+#if defined(SRL_VALIDATE_ANNOTATION_TARGETS) && SRL_VALIDATE_ANNOTATION_TARGETS
+                path.push_back(child);
+                validate_type_annotation_targets(recursively_dealias(std::meta::remove_cv(child_type)), path);
+                path.pop_back();
+#endif
+                collect_object_fields_impl(child_type, child,
                     offset + std::meta::offset_of(child).bytes, fields, path, mode);
             }
         } else {
@@ -126,8 +136,7 @@ namespace srl::detail {
             }
             payload_size += field.payload_size;
         }
-        const auto stored = std::define_static_array(fields);
-        return {payload_size, stored.data(), stored.size()};
+        return {payload_size, std::define_static_array(fields)};
     }
 
     consteval object_layout make_object_layout(std::meta::info type, bool segmented = false,
@@ -149,6 +158,7 @@ namespace srl::detail {
     }
 
     template<const object_layout &Layout>
+        requires (static_cast<bool>(Layout))
     using object_decode_status = status_type<object_fields_always_succeed(Layout.fields())>;
 
     template<object_field Field>
@@ -213,7 +223,7 @@ namespace srl::detail {
     }
 
     template<const object_layout &Layout, typename T, std::size_t Extent>
-        requires (std::meta::is_trivially_copyable_type(^^T))
+        requires (static_cast<bool>(Layout) && std::meta::is_trivially_copyable_type(^^T))
     always_success encode_object_bytes(const T &value, std::span<std::byte, Extent> destination) noexcept {
         const auto *source = reinterpret_cast<const std::byte *>(&value);
         if constexpr (Layout.payload_size == Extent && Extent == sizeof(T)) {

@@ -15,8 +15,11 @@ namespace srl::detail {
         szt wire_offset{};
         szt size{};
         validation_mode validation = validation_mode::checked;
+
+        //TODO use span instead?
         // Array elements share one reflected layout. Offsets in children are
         // relative to an element; only the repeat count scales with array size.
+
         const object_field *element_fields{};
         std::size_t element_field_count{};
         szt element_count{};
@@ -30,11 +33,24 @@ namespace srl::detail {
     };
 
     struct object_layout {
+    private:
+        static constexpr object_field empty_layout_anchor{};
+
+    public:
         szt payload_size{};
 
         // Public structural members are required by define_static_array.
         const object_field *field_data{};
         std::size_t field_count{};
+
+        consteval object_layout() noexcept = default;
+
+        consteval object_layout(szt payload, std::span<const object_field> fields) noexcept
+            // A present layout can have no fields; nullptr is reserved for absence.
+            : payload_size(payload), field_data(fields.empty() ? &empty_layout_anchor : fields.data()),
+              field_count(fields.size()) {}
+
+        [[nodiscard]] explicit consteval operator bool() const noexcept { return field_data != nullptr; }
 
         [[nodiscard]] consteval std::span<const object_field> fields() const noexcept {
             return {field_data, field_count};

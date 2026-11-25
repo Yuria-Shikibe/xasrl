@@ -103,16 +103,14 @@ namespace stream_tests {
         srl::byte_buffer seq{};
         const auto seq_status = srl::serialize(Sequence{0x12345678, 0x1122}, seq, default_context);
         ASSERT_TRUE(!bytes_status && !seq_status);
-        EXPECT_EQ(bytes.size(), 22u);
-        EXPECT_EQ(seq.size() - bytes.size(), 2 * srl::detail::entry_mapping_wire_size);
-        auto entry = srl::detail::parse_entry(bytes.span());
-        ASSERT_TRUE(entry);
-        EXPECT_EQ(entry->head().kind(), srl::entry_kind::stream);
-        EXPECT_EQ(entry->head().mapping_count(), 0u);
-        EXPECT_TRUE(entry->mappings().empty());
-        EXPECT_EQ(get_u32(bytes, 16), 0x12345678u);
-        EXPECT_EQ(std::to_integer<unsigned>(bytes.span()[20]), 0x22u);
-        EXPECT_EQ(srl::serialized_size(Numbers{}, default_context), 22u);
+        EXPECT_EQ(bytes.size(), 82u);
+        EXPECT_EQ(seq.size(), bytes.size());
+        const auto doc = open_document(bytes.span());
+        EXPECT_EQ(doc.entry.head().kind(), srl::entry_kind::stream);
+        EXPECT_EQ(doc.entry.head().mapping_count(), 0u);
+        EXPECT_EQ(get_u32(bytes, doc.at(0).offset), 0x12345678u);
+        EXPECT_EQ(std::to_integer<unsigned>(doc.at(1).bytes[0]), 0x22u);
+        EXPECT_EQ(srl::serialized_size(Numbers{}, default_context), 82u);
         srl::byte_buffer into;
         into.resize(bytes.size());
         ASSERT_FALSE(srl::serialize(Numbers{0x12345678, 0x1122}, into.span(), default_context));
@@ -125,7 +123,7 @@ namespace stream_tests {
         srl::byte_buffer empty{};
         const auto empty_status = srl::serialize(Empty{}, empty, default_context);
         ASSERT_TRUE(!empty_status);
-        EXPECT_EQ(empty.size(), 16u);
+        EXPECT_EQ(empty.size(), 44u);
         Empty empty_copy{};
         EXPECT_FALSE(srl::deserialize(empty.span(), empty_copy, default_context));
     }
@@ -195,7 +193,7 @@ namespace stream_tests {
         srl::byte_buffer overridden{};
         const auto overridden_status = srl::serialize(OverrideIds{{56, 78}}, overridden, default_context);
         ASSERT_TRUE(!overridden_status);
-        EXPECT_EQ(overridden.size(), 38u);
+        EXPECT_EQ(overridden.size(), srl::serialized_size<OverrideIds>());
         OverrideIds ids{};
         const auto ids_status = srl::deserialize(overridden.span(), ids, default_context);
         ASSERT_TRUE(!ids_status);
@@ -207,32 +205,38 @@ namespace stream_tests {
         srl::byte_buffer bytes{};
         const auto bytes_status = srl::serialize(Numbers{12, 34}, bytes, default_context);
         ASSERT_TRUE(!bytes_status);
-        bytes.resize(21);
-        set_u32(bytes, 0, 21);
+        const auto original = bytes;
+        const auto root = open_document(bytes.span());
+        const auto second = root.at(1).offset;
+        bytes.resize(bytes.size() - 1);
+        set_u64(bytes, root.root_offset(), bytes.size() - root.root_offset());
         Numbers out{77, 88};
         auto status = srl::deserialize(bytes.span(), out, default_context);
         EXPECT_EQ(status.code, srl::error_code::payload_out_of_bounds);
-        EXPECT_EQ(status.offset, 20u);
+        EXPECT_EQ(status.offset, second);
         EXPECT_FALSE(status.id.has_value());
         EXPECT_EQ(out.first, 77u);
-        bytes.resize(23);
-        set_u32(bytes, 0, 23);
+        bytes = original;
+        bytes.push_back(std::byte{});
+        set_u64(bytes, root.root_offset(), bytes.size() - root.root_offset());
         Numbers rejected_value_1{};
         require_error(srl::deserialize(bytes.span(), rejected_value_1, default_context),
                       srl::error_code::trailing_bytes, "stream trailing bytes");
         srl::byte_buffer nested{};
         const auto nested_status = srl::serialize(Converted{}, nested, default_context);
         ASSERT_TRUE(!nested_status);
-        set_u32(nested, 16, 0xffffffffu);
+        const auto nested_doc = open_document(nested.span());
+        const auto child = nested_doc.at(0).offset;
+        set_u64(nested, child, 0xffffffffu);
         Converted rejected_value_2{};
         require_error(srl::deserialize(nested.span(), rejected_value_2, default_context),
                       srl::error_code::payload_out_of_bounds, "oversized child");
-        set_u32(nested, 16, 0);
+        set_u64(nested, child, 0);
         Converted rejected_value_3{};
         require_error(srl::deserialize(nested.span(), rejected_value_3, default_context),
                       srl::error_code::invalid_entry_size, "undersized child");
-        nested.resize(20);
-        set_u32(nested, 0, 20);
+        nested.resize(child + 4);
+        set_u64(nested, nested_doc.root_offset(), nested.size() - nested_doc.root_offset());
         Converted rejected_value_4{};
         require_error(srl::deserialize(nested.span(), rejected_value_4, default_context),
                       srl::error_code::truncated_entry_header, "truncated child");

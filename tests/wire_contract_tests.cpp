@@ -25,7 +25,7 @@ namespace {
         yx stream{3, 4};
         status = srl::deserialize(bytes.span(), stream, context);
         EXPECT_EQ(status.code, srl::error_code::type_mismatch);
-        EXPECT_EQ(status.offset, 12u);
+        EXPECT_EQ(status.offset, 28u);
         EXPECT_EQ(stream.y, 3);
 
         ASSERT_FALSE(srl::serialize(std::vector<int>{1065353216}, bytes, context));
@@ -46,8 +46,7 @@ namespace {
             constexpr auto expected_type = tree[child].wire_type();
             constexpr auto id = tree[child].record_field().id;
             auto changed = bytes;
-            const auto mapping_offset = srl::detail::entry_head_wire_size
-                + ordinal++ * srl::detail::entry_mapping_wire_size;
+            const auto mapping_offset = srl_test::open_document(bytes.span()).inline_definition_offset() + srl::detail::definition_header_size + ordinal++ * srl::detail::definition_row_size;
             srl_test::set_u32(changed, mapping_offset + 4, expected_type ^ 0xffffffffu);
             model target;
             const auto status = srl::deserialize(changed.span(), target, context);
