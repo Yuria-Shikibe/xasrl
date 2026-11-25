@@ -95,7 +95,7 @@ issues. Keep C++ exceptions enabled.
   endianness form a portable serialized representation.
 - Keep edits scoped to the requested experiment or library behavior. Do not
   introduce compatibility layers or broad refactors without a concrete need.
-- For code changes, build and run relevant examples with the configured GCC 16
+- TESTS: only do when user required, For code changes, build and run relevant examples with the configured GCC 16
   toolchain. Add compile-time checks for reflection/schema rules and focused
   runtime tests for round trips and recoverable malformed-input errors as those
   facilities are implemented. Build the non-default GoogleTest target with

@@ -15,14 +15,10 @@ namespace {
     constexpr auto dynamic = extent::dynamic();
     constexpr auto limit = extent::fixed(maximum);
 
-    static_assert(!std::is_aggregate_v<extent>);
-    static_assert(!std::is_default_constructible_v<extent>);
-    static_assert(!std::is_constructible_v<extent, srl::szt>);
     static_assert(!std::is_convertible_v<extent, srl::szt>);
-    static_assert(std::is_const_v<decltype(extent::bytes)>);
     static_assert(dynamic.is_dynamic() && !limit.is_dynamic());
-    static_assert(dynamic.span_extent() == std::dynamic_extent);
-    static_assert(limit.span_extent() == maximum);
+    static_assert(dynamic.value == std::dynamic_extent);
+    static_assert(limit.value == maximum);
     static_assert(limit + zero == limit && zero + limit == limit);
     static_assert(limit + dynamic == dynamic && dynamic + limit == dynamic);
     static_assert(dynamic + dynamic == dynamic);

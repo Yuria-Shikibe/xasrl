@@ -15,13 +15,13 @@ namespace {
         f = INT64_MAX - 1, g = INT64_MAX,
     };
     enum class wide : std::uint64_t { a = 0, b = 63, c = UINT64_MAX - 1, d = UINT64_MAX };
-    enum class [[=srl::tag::flags{0xff}]] all_flags : std::uint8_t { a = 1 };
-    enum class [[=srl::tag::flags{0x83}]] flags : std::uint8_t { a = 1, b = 2, c = 128 };
-    enum class [[=srl::tag::flags{0}]] inferred_flags : std::uint8_t { none = 0, ab = 3, alias = 3, c = 128 };
-    enum class [[=srl::tag::flags{}]] bool_flags : bool { yes = true };
-    enum class [[=srl::tag::flags{0}]] inferred_high_flags : std::uint64_t { high = 1ull << 63, low = 3 };
-    enum class [[=srl::tag::flags{UINT64_MAX}]] full_flags : std::uint64_t {};
-    enum class [[=srl::tag::flags{0x8000000000000003ull}]] high_flags : std::uint64_t {};
+    enum class [[=srl::tag::bit_flag{0xff}]] all_flags : std::uint8_t { a = 1 };
+    enum class [[=srl::tag::bit_flag{0x83}]] flags : std::uint8_t { a = 1, b = 2, c = 128 };
+    enum class [[=srl::tag::bit_flag{0}]] inferred_flags : std::uint8_t { none = 0, ab = 3, alias = 3, c = 128 };
+    enum class [[=srl::tag::bit_flag{}]] bool_flags : bool { yes = true };
+    enum class [[=srl::tag::bit_flag{0}]] inferred_high_flags : std::uint64_t { high = 1ull << 63, low = 3 };
+    enum class [[=srl::tag::bit_flag{UINT64_MAX}]] full_flags : std::uint64_t {};
+    enum class [[=srl::tag::bit_flag{0x8000000000000003ull}]] high_flags : std::uint64_t {};
 
     template<typename E>
     constexpr bool reference(std::underlying_type_t<E> value) {

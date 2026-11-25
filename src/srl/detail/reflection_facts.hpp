@@ -10,8 +10,8 @@
 
 namespace srl {
     consteval std::meta::info recursively_dealias(std::meta::info info) {
-        if (std::meta::is_type_alias(info)) {
-            return recursively_dealias(std::meta::dealias(info));
+        while (std::meta::is_type_alias(info)) {
+            info = std::meta::dealias(info);
         }
         return info;
     }
@@ -26,31 +26,28 @@ namespace srl::detail {
 
     consteval std::vector<std::meta::info> reflected_entities(std::meta::info type) {
         auto result = std::meta::bases_of(type, std::meta::access_context::unchecked());
-        for (auto member: std::meta::nonstatic_data_members_of(type, std::meta::access_context::unchecked())) {
-            result.push_back(member);
-        }
+        result.append_range(std::meta::nonstatic_data_members_of(type, std::meta::access_context::unchecked()));
         return result;
     }
 
     consteval bool schema_has_fields(std::meta::info type) {
         type = recursively_dealias(type);
+
+        //TODO is union here should be supported ?
         if (!std::meta::is_class_type(type)) {
             return false;
         }
         if (annotation_count(type, ^^tag::auto_seq) != 0) {
             return true;
         }
-        for (auto entity: reflected_entities(type)) {
-            if (annotation_count(entity, ^^tag::field) != 0) {
-                return true;
-            }
-        }
-        return false;
+
+        return std::ranges::any_of(reflected_entities(type), [](std::meta::info i) {
+            return annotation_count(i, ^^tag::field) != 0;
+        });
     }
 
     consteval bool schema_contains_pointer(std::meta::info type) {
-        if (std::meta::is_reference_type(type) || std::meta::is_pointer_type(type)
-            || std::meta::is_member_pointer_type(type)) {
+        if (std::meta::is_reference_type(type) || std::meta::is_pointer_type(type) || std::meta::is_member_pointer_type(type)) {
             return true;
         }
         type = std::meta::remove_cv(type);
@@ -58,11 +55,9 @@ namespace srl::detail {
             return schema_contains_pointer(std::meta::remove_extent(type));
         }
         if (std::meta::is_class_type(type) || std::meta::is_union_type(type)) {
-            for (auto entity: reflected_entities(type)) {
-                if (schema_contains_pointer(std::meta::type_of(entity))) {
-                    return true;
-                }
-            }
+            return std::ranges::any_of(reflected_entities(type), [](std::meta::info i) {
+                return schema_contains_pointer(std::meta::type_of(i));
+            });
         }
         return false;
     }
@@ -72,7 +67,15 @@ namespace srl::detail {
         std::meta::info declared;
         bool base;
         bool unsupported;
-        std::size_t fields, leaves, containers, conversions, transient, bypass, streams, fallbacks, validation_bypasses;
+        std::size_t fields;
+        std::size_t leaves;
+        std::size_t containers;
+        std::size_t conversions;
+        std::size_t transient;
+        std::size_t bypass;
+        std::size_t streams;
+        std::size_t fallbacks;
+        std::size_t validation_bypasses;
 
         consteval explicit entity_facts(std::meta::info entity)
             : declared(std::meta::type_of(entity)), base(std::meta::is_base(entity)),
@@ -92,7 +95,8 @@ namespace srl::detail {
     // Shared by automatic leaf eligibility and schema validation, including
     // explicitly specialized leaf codecs. Returns the offending entity.
     consteval std::meta::info leaf_metadata_issue(std::meta::info type) {
-        if (annotation_count(type, ^^tag::auto_seq) != 0
+        if (!std::meta::is_class_type(type)
+            || annotation_count(type, ^^tag::auto_seq) != 0
             || annotation_count(type, ^^tag::auto_stream) != 0
             || annotation_count(type, ^^tag::bypass_pointer_check) > 1
             || annotation_count(type, ^^tag::bypass_validation) > 1) {
@@ -194,14 +198,19 @@ namespace srl::detail {
             std::meta::annotations_of_with_type(type, ^^tag::leaf).front());
     }
 
+    consteval bool leaf_allows_object_representation(std::meta::info type) {
+        return leaf_options(type).allow_non_unique_presentation
+            || std::meta::has_unique_object_representations(type);
+    }
+
     consteval bool leaf_uses_direct_object_representation_impl(std::meta::info type) {
         return !has_transient_members(type)
-            && (leaf_options(type).allow_padding || std::meta::has_unique_object_representations(type));
+            && leaf_allows_object_representation(type);
     }
 
     consteval bool leaf_uses_segmented_object_representation_impl(std::meta::info type) {
         return has_transient_members(type)
-            && (leaf_options(type).allow_padding || std::meta::has_unique_object_representations(type))
+            && leaf_allows_object_representation(type)
             && std::meta::is_trivially_copyable_type(type)
             && transient_layout_supports_segmented_copy(type);
     }

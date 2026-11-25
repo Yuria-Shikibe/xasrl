@@ -34,8 +34,9 @@ namespace {
     TEST(EncodePlan, ConditionalSizesAndCountsPreserveWireData) {
         const srl::serialization_context context;
         auto round_trip = [&]<typename T>(const T &source) {
-            root_plan<T> plan;
-            ASSERT_FALSE(plan.prepare(source, context));
+            srl::serialization_workspace workspace;
+            root_plan<T> plan{workspace.resource()};
+            ASSERT_FALSE(plan.prepare(source, context, workspace.resource()));
             srl::byte_buffer bytes;
             ASSERT_FALSE(srl::serialize(source, bytes, context));
             EXPECT_EQ(static_cast<srl::szt>(plan.size), bytes.size());
@@ -53,7 +54,7 @@ namespace {
     }
 
     constexpr srl::schema tree(^^std::vector<Rect>);
-    constexpr auto element = tree.tree.child(tree.value, 0);
+    constexpr auto element = tree.tree.child_indices(tree.tree.value_index())[0];
     static_assert(!srl::detail::encoding_needs_cache(tree.tree, element));
     static_assert(std::is_empty_v<srl::detail::container_slot_plans<tree.tree, element>>);
 
@@ -61,7 +62,7 @@ namespace {
         int a, b, c, d, e, f, g, h, i, j, k, l;
     };
     constexpr srl::schema many_schema(^^many_fields);
-    using many_plan = srl::detail::value_codec<many_schema.tree, many_schema.value>::encode_plan;
+    using many_plan = srl::detail::value_codec<many_schema.tree, many_schema.tree.value_index()>::encode_plan;
     static_assert(std::meta::identifier_of(many_plan::members[10]) == "field_10");
     static_assert(std::meta::identifier_of(many_plan::members[11]) == "field_11");
 

@@ -9,11 +9,11 @@ namespace {
         mode state{};
         mode states[2]{};
     };
-    struct [[=srl::tag::leaf{.allow_padding = true}]] padded {
+    struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] padded {
         bool enabled{};
         std::uint32_t count{};
     };
-    struct [[=srl::tag::leaf{.allow_padding = true}]] segmented {
+    struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] segmented {
         bool enabled{};
         [[=srl::tag::transient{}]] std::uint32_t cache = 99;
         mode state{};
@@ -25,8 +25,8 @@ namespace {
     template<typename T>
     void check_generated_validation() {
         constexpr auto schema = srl::schema(^^T).tree;
-        constexpr auto node = schema.child(schema.root, 0);
-        constexpr auto layout = schema.node(node).object;
+        constexpr auto node = schema.value_index();
+        constexpr auto layout = schema[node].leaf().layout().value();
         static_assert(!layout.fields().empty());
         srl::serialization_context context;
         srl::byte_buffer bytes;
@@ -60,9 +60,9 @@ namespace {
         srl::byte_buffer bytes;
         ASSERT_FALSE(srl::serialize(forced{}, bytes, context));
         constexpr auto tree = srl::schema(^^forced).tree;
-        constexpr auto field = tree.child(tree.child(tree.root, 0), 0);
-        constexpr auto layout = tree.node(field).object;
-        static_assert(layout.fields().size() == 4);
+        constexpr auto layout = tree[tree.value_index(), 0].leaf().layout().value();
+        static_assert(layout.fields().size() == 3);
+        static_assert(layout.fields()[2].element_count == 2);
         const auto entry = srl::detail::parse_entry(bytes.span());
         ASSERT_TRUE(entry);
         constexpr auto state_offset = layout.fields()[1].wire_offset;

@@ -19,6 +19,7 @@
 #include <system_error>
 #include <utility>
 
+#include "../number_to_string.hpp"
 #include "utility.hpp"
 
 namespace srl::detail {
@@ -57,9 +58,12 @@ namespace srl::detail {
         [[nodiscard]] static std::expected<staged_file, error> create(const std::filesystem::path &destination) {
             static std::atomic<std::uint64_t> sequence{};
             static const auto epoch = std::chrono::steady_clock::now().time_since_epoch().count();
+            const auto pid = number_to_string<10, wchar_t>(GetCurrentProcessId());
+            const auto timestamp = number_to_string<10, wchar_t>(epoch);
+            const auto index = number_to_string<10, wchar_t>(sequence.fetch_add(1, std::memory_order_relaxed));
             auto temporary = destination;
-            temporary += L".srl-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(epoch)
-                + L"-" + std::to_wstring(sequence.fetch_add(1, std::memory_order_relaxed)) + L".tmp";
+            temporary += std::wstring{L".srl-"}.append(pid.view()).append(L"-").append(timestamp.view())
+                .append(L"-").append(index.view()).append(L".tmp");
             // Copy before acquiring the handle: all potentially allocating path
             // operations precede ownership acquisition.
             auto target = destination;

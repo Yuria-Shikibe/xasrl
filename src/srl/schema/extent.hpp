@@ -15,25 +15,19 @@ namespace srl::detail {
     class extent_overflow : public std::overflow_error {
     public:
         consteval extent_overflow(std::string_view operation, szt left, szt right)
-        //TODO use format instead
             : std::overflow_error(std::string("schema extent ") + std::string(operation)
-                + ": left=" + diagnostic_integer(left) + ", right=" + diagnostic_integer(right)
-                + ", maximum_entry_size=" + diagnostic_integer(maximum_entry_size)) {}
+                + ": left=" + number_to_string(left) + ", right=" + number_to_string(right)
+                + ", maximum_entry_size=" + number_to_string(maximum_entry_size)) {}
     };
 }
 
 namespace srl {
     struct schema_extent {
-        // consteval explicit schema_extent(szt value) noexcept : bytes(value) {}
-
-    // public:
-        // Public and immutable so schema nodes remain structural types for
-        // define_static_array; only the checked factories can create a value.
+    public:
         szt value;
 
-
         [[nodiscard]] static consteval schema_extent fixed(szt bytes) {
-            if (bytes > detail::maximum_entry_size) {
+            if (bytes > detail::maximum_entry_size) [[unlikely]] {
                 throw detail::extent_overflow("fixed size out of range", bytes, 0);
             }
             return schema_extent(bytes);
@@ -47,14 +41,9 @@ namespace srl {
             return value == std::dynamic_extent;
         }
 
-        // Convert only at interfaces using the standard span extent convention.
-        [[nodiscard]] [[deprecated("use value instead")]] consteval std::size_t span_extent() const noexcept {
-            return static_cast<std::size_t>(value);
-        }
-
         [[nodiscard]] friend consteval schema_extent operator+(schema_extent left, schema_extent right) {
             if (left.is_dynamic() || right.is_dynamic()) { return dynamic(); }
-            if (right.value > detail::maximum_entry_size - left.value) {
+            if (right.value > detail::maximum_entry_size - left.value) [[unlikely]] {
                 throw detail::extent_overflow("addition overflow", left.value, right.value);
             }
             return schema_extent(left.value + right.value);
@@ -68,7 +57,7 @@ namespace srl {
         [[nodiscard]] consteval schema_extent scaled_by(std::size_t count) const {
             if (count == 0 || value == 0) { return fixed(0); }
             if (is_dynamic()) { return dynamic(); }
-            if (count > detail::maximum_entry_size / value) {
+            if (count > detail::maximum_entry_size / value) [[unlikely]] {
                 throw detail::extent_overflow("multiplication overflow", value, count);
             }
             return schema_extent(value * count);

@@ -5,12 +5,21 @@
 #include <vector>
 
 #include "srl/core.hpp"
+#include "srl/number_to_string.hpp"
 #include "srl/schema_visualization.hpp"
 
 template <typename T>
-struct [[=srl::tag::leaf{}]] vec2 {
+struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] vec2 {
     T x, y;
 };
+
+
+
+struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] trans2 {
+    vec2<float> pos;
+    float rot;
+};
+
 
 struct PlayerProfile {
     [[=srl::tag::field{.id = 1}]]
@@ -19,11 +28,18 @@ struct PlayerProfile {
     [[=srl::tag::field{.id = 2}]]
     std::vector<vec2<std::uint32_t>> vals{};
 
+    [[=srl::tag::field{.id = 5}]]
+    std::vector<vec2<trans2>> valss{};
+
+    [[=srl::tag::field{.id = 4}]]
+    trans2 trans{};
+
     [[=srl::tag::field{.id = 3}]]
     int level{};
 };
 
 int main() {
+
     const srl::serialization_context context;
     const PlayerProfile source{
         .name = "reflection demo",
@@ -31,7 +47,10 @@ int main() {
         .level = 26,
     };
 
-    std::println("schema \n {}", srl::schema_string(^^PlayerProfile));
+    std::println("Schema (compact):\n{0}\n\nSchema (detailed):\n{0:d}"
+                 "\n\nSchema (memory, default 8B/row):\n{0:b}"
+                 "\n\nSchema (memory, 4B/row):\n{0:b2}",
+                 srl::schema_view<^^PlayerProfile>{});
 
     srl::byte_buffer bytes{};
     const auto bytes_status = srl::serialize(source, bytes, context);
@@ -45,8 +64,7 @@ int main() {
         throw std::runtime_error(std::string{srl::message(copy_status.code)});
     }
 
-    std::println("{} reached level {} ({} serialized bytes)",
-                 copy.name,
-                 copy.level,
-                 bytes.size());
+    const auto level = srl::number_to_string(copy.level);
+    const auto size = srl::number_to_string(bytes.size());
+    std::println("{} reached level {} ({} serialized bytes)", copy.name, level.view(), size.view());
 }

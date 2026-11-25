@@ -3,6 +3,7 @@
 #include <array>
 #include <concepts>
 #include <cstddef>
+#include <inplace_vector>
 #include <memory>
 #include <meta>
 #include <ranges>
@@ -27,14 +28,21 @@ namespace srl {
             { transaction_traits<T>::commit(left, right) } noexcept;
         };
 
+        template<typename T>
+        concept has_transaction_clone = requires(const T &source) {
+            { transaction_traits<T>::clone(source) } -> std::same_as<T>;
+        };
+
         consteval bool transaction_commit_supported(std::meta::info type) {
+            if (std::meta::is_const_type(type) || std::meta::is_volatile_type(type)) { return false; }
             if (std::meta::is_nothrow_swappable_type(type)) { return true; }
             if (!std::meta::is_aggregate_type(type) || std::meta::is_array_type(type)
                 || std::meta::extract<bool>(std::meta::substitute(^^has_adl_swap, {type}))) {
                 return false;
             }
             for (auto entity: reflected_entities(type)) {
-                const auto member = std::meta::remove_cvref(std::meta::type_of(entity));
+                const auto member = std::meta::type_of(entity);
+                if (std::meta::is_reference_type(member) || std::meta::is_bit_field(entity)) { return false; }
                 if (!std::meta::extract<bool>(std::meta::substitute(^^has_transaction_commit, {member}))) {
                     return false;
                 }
@@ -72,6 +80,29 @@ namespace srl {
             }
             return !std::meta::is_union_type(type);
         }
+
+        template<typename T>
+        inline constexpr bool default_clone_supported = [] consteval {
+            if constexpr (!std::copy_constructible<T>) {
+                return false;
+            } else if constexpr (requires(const T &value) { T(value, value.get_allocator()); }) {
+                return true;
+            } else if constexpr (copy_preserves_swap_domain(^^T)) {
+                return true;
+            } else if constexpr (std::meta::is_aggregate_type(^^T)) {
+                for (auto entity: reflected_entities(^^T)) {
+                    auto member = std::meta::type_of(entity);
+                    if (std::meta::is_reference_type(member) || std::meta::is_bit_field(entity)) { return false; }
+                    while (std::meta::is_array_type(member)) { member = std::meta::remove_extent(member); }
+                    if (!std::meta::extract<bool>(std::meta::substitute(^^has_transaction_clone, {member}))) {
+                        return false;
+                    }
+                }
+                return true;
+            } else {
+                return false;
+            }
+        }();
 
         consteval std::size_t initializer_count(std::meta::info type) {
             std::size_t count = 1;
@@ -131,14 +162,12 @@ namespace srl {
     template<typename T>
     struct transaction_traits {
         [[nodiscard]] static T clone(const T &value)
-            requires std::copy_constructible<T> {
+            requires detail::default_clone_supported<T> {
             if constexpr (requires { value.get_allocator(); T(value, value.get_allocator()); }) {
                 return T(value, value.get_allocator());
             } else if constexpr (detail::copy_preserves_swap_domain(^^T)) {
                 return T(value);
             } else {
-                static_assert(std::meta::is_aggregate_type(^^T),
-                    "allocator-bearing non-aggregate requires transaction_traits<T>");
                 return detail::clone_aggregate(value);
             }
         }
@@ -151,11 +180,54 @@ namespace srl {
                 template for (constexpr auto entity: std::define_static_array(detail::reflected_entities(^^T))) {
                     constexpr auto kind = std::meta::is_base(entity)
                         ? detail::reflected_entity_kind::base : detail::reflected_entity_kind::member;
-                    using member = typename[:std::meta::remove_cvref(std::meta::type_of(entity)):];
+                    using member = typename[:std::meta::type_of(entity):];
                     transaction_traits<member>::commit(detail::entity_reference<entity, kind>(out),
                         detail::entity_reference<entity, kind>(staged));
                 }
             }
+        }
+    };
+
+    template<typename T, typename Allocator>
+    struct transaction_traits<std::vector<T, Allocator>> {
+        using value_type = std::vector<T, Allocator>;
+
+        [[nodiscard]] static value_type clone(const value_type &value)
+            requires std::copy_constructible<T> {
+            return value_type(value, value.get_allocator());
+        }
+
+        // Only the container decoder may use this: it replaces every element.
+        // clone remains a value-preserving operation for callers and records.
+        [[nodiscard]] static value_type stage(const value_type &value) {
+            return value_type(value.get_allocator());
+        }
+
+        static void commit(value_type &out, value_type &staged) noexcept {
+            out.swap(staged);
+        }
+    };
+
+    template<typename T, std::size_t Size>
+    struct transaction_traits<std::inplace_vector<T, Size>> {
+        using value_type = std::inplace_vector<T, Size>;
+
+        [[nodiscard]] static value_type clone(const value_type &value)
+            requires detail::has_transaction_clone<T> {
+            value_type result;
+            for (const auto &element: value) {
+                result.emplace_back(transaction_traits<T>::clone(element));
+            }
+            return result;
+        }
+
+        static void commit(value_type &out, value_type &staged) noexcept
+            // Dynamic decode rebuilds elements rather than merging old ones.
+            // Elementwise swap must therefore work across independently
+            // constructed element allocator domains.
+            requires (std::meta::is_nothrow_swappable_type(^^value_type)
+                && detail::copy_preserves_swap_domain(^^T)) {
+            out.swap(staged);
         }
     };
 
@@ -171,7 +243,8 @@ namespace srl {
 
     template<typename T, std::size_t Size>
     struct transaction_traits<std::array<T, Size>> {
-        [[nodiscard]] static std::array<T, Size> clone(const std::array<T, Size> &value) {
+        [[nodiscard]] static std::array<T, Size> clone(const std::array<T, Size> &value)
+            requires (Size == 0 || detail::has_transaction_clone<T>) {
             return [&]<std::size_t... Indices>(std::index_sequence<Indices...>) {
                 return std::array<T, Size>{transaction_traits<T>::clone(value[Indices])...};
             }(std::make_index_sequence<Size>{});

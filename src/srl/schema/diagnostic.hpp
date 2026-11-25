@@ -2,17 +2,21 @@
 
 #include <cstdint>
 #include <meta>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "../number_to_string.hpp"
+
 namespace srl {
     enum class schema_error : std::uint8_t {
         none, invalid_schema, unsupported_type, conflicting_annotations, duplicate_field_id,
         field_id_overflow, recursive_type, invalid_conversion, invalid_object_representation,
         extent_overflow, mapping_limit, missing_default_constructor, unsupported_entity,
+        invalid_fallback,
     };
 
     struct schema_issue {
@@ -23,12 +27,18 @@ namespace srl {
     };
 
     [[nodiscard]] consteval std::string format_schema_issue(const schema_issue &issue) {
-        std::string result = "srl: ";
+        std::string result = "srl: [";
+
+        //TODO reuse the enum to string
         for (auto value: std::meta::enumerators_of(^^schema_error)) {
             if (issue.reason == std::meta::extract<schema_error>(std::meta::constant_of(value))) {
                 result.append(std::meta::identifier_of(value));
+
             }
         }
+
+        result.push_back(']');
+
         for (auto entity: issue.path) {
             result.append(" -> ").append(std::meta::display_string_of(entity));
         }
@@ -38,15 +48,6 @@ namespace srl {
 }
 
 namespace srl::detail {
-    consteval std::string diagnostic_integer(std::uint64_t value) {
-        std::string result;
-        do {
-            result.insert(result.begin(), static_cast<char>('0' + value % 10));
-            value /= 10;
-        } while (value != 0);
-        return result;
-    }
-
     class schema_failure : public std::runtime_error {
         schema_issue issue_;
     public:

@@ -10,17 +10,17 @@
 #include <vector>
 
 namespace {
-    enum class [[=srl::tag::flags{0}]] permissions : std::uint8_t {
+    enum class [[=srl::tag::bit_flag{0}]] permissions : std::uint8_t {
         read = 1, write = 2, special = 0x80,
     };
     enum class ordinary : std::uint8_t { read = 1, write = 2 };
-    enum class [[=srl::tag::flags{.mask = 1}]] signed_flags : int { read = 1 };
-    enum class [[=srl::tag::flags{.mask = 256}]] oversized_flags : std::uint8_t {};
-    enum class [[=srl::tag::flags{.mask = 1}]] uncovered_flags : unsigned { write = 2 };
-    enum class [[=srl::tag::flags{1}, =srl::tag::flags{1}]] duplicate_flags : unsigned { read = 1 };
-    enum class [[=srl::tag::flags{}]] zero_flags : unsigned {};
-    enum class [[=srl::tag::flags{0}]] only_zero_flags : unsigned { none = 0 };
-    enum class [[=srl::tag::flags{.mask = 1ull << 63}]] wide_flags : std::uint64_t { high = 1ull << 63 };
+    enum class [[=srl::tag::bit_flag{.mask = 1}]] signed_flags : int { read = 1 };
+    enum class [[=srl::tag::bit_flag{.mask = 256}]] oversized_flags : std::uint8_t {};
+    enum class [[=srl::tag::bit_flag{.mask = 1}]] uncovered_flags : unsigned { write = 2 };
+    enum class [[=srl::tag::bit_flag{1}, =srl::tag::bit_flag{1}]] duplicate_flags : unsigned { read = 1 };
+    enum class [[=srl::tag::bit_flag{}]] zero_flags : unsigned {};
+    enum class [[=srl::tag::bit_flag{0}]] only_zero_flags : unsigned { none = 0 };
+    enum class [[=srl::tag::bit_flag{.mask = 1ull << 63}]] wide_flags : std::uint64_t { high = 1ull << 63 };
 
     static_assert(srl::schema_valid(^^permissions));
     static_assert(!srl::schema_valid(^^signed_flags));
@@ -159,10 +159,10 @@ namespace {
             "invalid_bool path=profile.active id=0 offset=123");
         EXPECT_EQ(srl::format_error({.code = srl::error_code::truncated_entry_header}),
             "truncated_entry_header offset=0");
-        const std::error_code system = std::make_error_code(std::errc::permission_denied);
+        const std::error_code system{-42, std::generic_category()};
         const auto text = srl::format_error({.code = srl::error_code::io_open_failed, .system_error = system});
         EXPECT_NE(text.find(system.category().name()), std::string::npos);
-        EXPECT_NE(text.find(std::to_string(system.value())), std::string::npos);
+        EXPECT_NE(text.find(":-42 ("), std::string::npos);
         EXPECT_NE(text.find(system.message()), std::string::npos);
     }
 }

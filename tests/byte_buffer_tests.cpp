@@ -84,6 +84,13 @@ namespace {
         EXPECT_EQ(bytes.size(), 3u);
         EXPECT_EQ(bytes.data(), pointer);
         EXPECT_EQ(bytes[2], std::byte{42});
+        bytes.resize_and_overwrite(8, [](std::span<std::byte> output) noexcept -> std::size_t {
+            std::fill_n(output.begin(), 5, std::byte{23});
+            return 5;
+        });
+        EXPECT_EQ(bytes.size(), 5u);
+        EXPECT_EQ(bytes.data(), pointer);
+        EXPECT_EQ(bytes[4], std::byte{23});
         EXPECT_THROW(bytes.resize_and_overwrite(8, [](std::span<std::byte>) -> std::size_t {
             throw std::runtime_error("writer failed");
         }), std::runtime_error);

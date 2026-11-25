@@ -34,8 +34,6 @@ namespace srl {
 
     struct schema {
         const schema_tree tree;
-        const std::size_t root;
-        const std::size_t value;
 
         consteval explicit schema(std::meta::info type)
             : schema(type, detail::annotation_count(std::meta::remove_cvref(type), ^^tag::auto_stream) != 0) {}
@@ -45,10 +43,24 @@ namespace srl {
             : schema(^^T, reflected_stream<T>) {}
 
         consteval schema(std::meta::info type, bool stream)
-            : tree(detail::build_schema(type, stream)),
-              root(tree.root),
-              value(tree.child(root, 0)) {}
+            : tree(detail::build_schema(type, stream)) {}
+
+        [[nodiscard]] consteval schema_node root_node() const noexcept {
+            return tree.root_node();
+        }
+
+        [[nodiscard]] consteval schema_node value_node() const noexcept {
+            return tree.value_node();
+        }
     };
+
+    namespace detail {
+        template<typename T>
+        inline constexpr schema schema_for{^^T};
+
+        template<typename T>
+        inline constexpr schema_extent root_encode_extent = schema_for<T>.root_node().encode_extent();
+    }
 
     [[nodiscard]] consteval schema_issue inspect_schema(std::meta::info type) {
         try {
@@ -70,9 +82,9 @@ namespace srl {
 
     consteval std::size_t serialized_field_count(std::meta::info type) {
         const auto tree = detail::build_schema(type);
-        const auto &node = tree.node(tree.child(tree.root, 0));
-        if (node.kind == schema_kind::record || node.kind == schema_kind::stream) {
-            return node.children_count;
+        const auto node = tree.value_node();
+        if (node.kind() == schema_kind::record || node.kind() == schema_kind::stream) {
+            return tree.child_indices(tree.value_index()).size();
         } else {
             return 0;
         }

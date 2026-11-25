@@ -1,9 +1,12 @@
 #include "test_support.hpp"
 
+#include "srl/number_to_string.hpp"
+
 namespace {
     TEST(AtomicFile, ReplacesExistingFileAndPreservesItOnCommitFailure) {
+        const auto pid = srl::number_to_string<10, wchar_t>(GetCurrentProcessId());
         const auto directory = std::filesystem::temp_directory_path()
-            / ("srl_atomic_" + std::to_string(GetCurrentProcessId()));
+            / std::wstring{L"srl_atomic_"}.append(pid.view());
         std::filesystem::create_directory(directory);
         const auto path = directory / "save.bin";
         srl::serialization_context context;

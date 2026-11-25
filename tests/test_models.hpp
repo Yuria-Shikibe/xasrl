@@ -47,7 +47,7 @@ struct [[=srl::tag::auto_seq{}]] Rect {
     Vec2 maximum{};
 };
 
-struct [[=srl::tag::leaf{.allow_padding = true}]] PaddedLeaf {
+struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] PaddedLeaf {
     std::uint8_t small{};
     std::uint32_t large{};
 };
@@ -74,7 +74,7 @@ struct [[=srl::tag::leaf{}]] TransientLeaf {
     std::uint32_t fourth{};
 };
 
-struct [[=srl::tag::leaf{.allow_padding = true}]] TransientPointerLeaf {
+struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] TransientPointerLeaf {
     [[=srl::tag::transient{}]]
     int *runtime_pointer{};
 
@@ -131,7 +131,7 @@ struct [[=srl::tag::leaf{}]] VirtualDerivedLeaf : virtual LeafBase {
     std::uint32_t derived_value{};
 };
 
-struct [[=srl::tag::leaf{.allow_padding = true}]] NonTrivialPaddedLeaf {
+struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] NonTrivialPaddedLeaf {
     std::string value{};
 };
 

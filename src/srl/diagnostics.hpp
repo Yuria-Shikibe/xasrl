@@ -4,6 +4,7 @@
 #include <string_view>
 
 #include "error.hpp"
+#include "number_to_string.hpp"
 
 namespace srl {
     // A field ID alone is not a full path: it can belong to a nested record or
@@ -15,13 +16,16 @@ namespace srl {
             result.append(" path=").append(field_path);
         }
         if (failure.id) {
-            result.append(" id=").append(std::to_string(*failure.id));
+            const auto id = number_to_string(*failure.id);
+            result.append(" id=").append(id.view());
         }
-        result.append(" offset=").append(std::to_string(failure.offset));
+        const auto offset = number_to_string(failure.offset);
+        result.append(" offset=").append(offset.view());
         if (failure.system_error) {
             const auto &system = *failure.system_error;
+            const auto code = number_to_string(system.value());
             result.append(" system=").append(system.category().name()).append(":")
-                .append(std::to_string(system.value())).append(" (").append(system.message()).append(")");
+                .append(code.view()).append(" (").append(system.message()).append(")");
         }
         return result;
     }

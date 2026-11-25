@@ -26,6 +26,7 @@
   文件写入通过临时文件提交，提交失败保留原文件。业务 callback 的外部副作用不在事务内。
 - 未参与序列化的普通成员及固定容器已有元素状态通过事务副本保留；动态容器重建元素，
   不合并旧元素状态。fallback{} 使用字段类型 T{}，不会重新执行宿主成员初始化器。
+  defaults::automatic{} 显式复用编译期默认宿主对象的成员值，无法取得时拒绝 schema
 - 对象表示 leaf 要求满足布局约束；允许 padding 时写零。绕过指针检查仅保存地址表示，
   用户负责地址有效性。当前 storage version 为 4，未实现压缩、CRC 或版本迁移。
 
@@ -109,11 +110,15 @@ if (auto status = srl::deserialize(bytes.span(), restored, context); status) {
 等输入边界校验仍返回 `error`。可通过 `decltype` 判断具体操作的返回类型，不能仅凭 `T`
 断言整个反序列化过程恒成功。
 
-`deserialize` 接受可写或只读、定长或动态的字节 span，采用复制目标、解码临时对象、
+`deserialize` 接受可写或只读、定长或动态的字节 span，采用准备暂存对象、解码临时对象、
 成功后提交的事务语义；错误或异常不改变原目标。目标必须满足 `transactional<T>`，
 默认保留容器 allocator，必要时由反射逐成员复制和提交 aggregate；带 allocator 的
 非 aggregate 可以特化 `transaction_traits<T>`，保证 `clone` 保留 `commit` 的前置条件。
-普通类型仍使用复制和无异常交换，不引入运行时类型擦除或 allocator 比较。
+普通类型仍使用复制和无异常交换，不引入运行时类型擦除或 allocator 比较
+根 `std::vector` 由容器解码器完整替换，因此使用原 allocator 创建空暂存，避免复制后清空旧元素
+`transaction_traits::clone` 本身仍保持值复制语义，record 的未序列化状态与固定容器已有元素不变
+`std::inplace_vector` 区分固定容量与固定长度，输入元素数超过容量返回 `resource_limit_exceeded`
+其元素须满足安全的无异常提交及 allocator 条件，否则需显式定制事务
 根原生数组采用元素级复制和交换。未序列化状态沿用各 codec 的规则，不合并动态容器
 中的旧元素；读取新对象时由调用方先默认构造目标即可。
 
@@ -177,6 +182,42 @@ bit-field 和没有序列化规则的字段都会使 `schema_valid(^^T)` 返回 
 成员初始化器。`fallback{defaults::value<42>{}}` 指定固定默认值，`provider` 和
 `modifier` 支持业务生成和修改。fallback 仅用于缺失字段，不能修复存在但损坏的数据。
 该策略保存在 `schema_node::fallback_type`，编解码与 schema 展示共同读取它。
+
+### 自动默认值
+
+不想在成员初始化器和 fallback 中维护两份默认值时，显式选择 `defaults::automatic{}`
+
+```cpp
+struct Player {
+    [[=srl::tag::field{1}]]
+    int id{};
+
+    [[=srl::tag::field{2}, =srl::tag::fallback{srl::defaults::automatic{}}]]
+    int hp = 100;
+};
+```
+
+缺失 ID 2 时恢复为 `100`，而非目标中先前的值；存在 ID 2 时读取输入值。
+未标注 fallback 的 ID 1 仍然必填。普通 `fallback{}` 保持字段类型 `T{}` 的原有语义
+
+automatic 在编译期构造声明该成员的 `Owner{}`，取得构造完成后的成员值。
+这不是直接反射成员初始化表达式：构造函数覆盖 `hp` 时取覆盖后的值；
+没有成员初始化器但由构造函数赋值的字段也适用。嵌套字段只要求自己的声明宿主可求值，
+不要求整个根对象可在编译期构造。宿主的构造、读取与销毁必须能完成常量求值，
+取得的值也必须能被安全保存并赋给目标字段
+
+支持标量、可作常量模板实参的结构化类值、原生数组、`std::array`，以及使用标准 allocator 的
+`std::string`、`std::vector`；数组和容器元素可以递归组合。字符串和 vector 在编译期保存元素快照，
+缺失字段时只重建该成员，不重新构造宿主。宿主本身可以包含编译期临时分配的容器，
+只要分配在求值结束前被释放；不要求整个宿主能保存成 `constexpr` 变量
+
+私有成员也可自动取值，但私有成员所在的宿主与字段自身的类型不同：字段类型若为包含私有数据的
+非结构化自定义类，当前不能自动保存其值，需要显式 `provider`
+
+宿主不能默认构造、构造需要运行时资源，或默认值无法编译期取得／保存时，schema 在编译期拒绝。
+不会退回 `T{}`、保留旧值或改为运行时构造宿主。此时可显式使用 `value` 或 `provider` 策略。
+automatic 同样只处理缺失字段，不能用于 stream、leaf 内部成员或 transient 成员，
+也不会把存在但损坏的数据替换成默认值
 
 错误的 `offset` 是相对根 entry 的字节偏移；嵌套 codec 每层只累计一次 payload 起点。
 `decode` 不传递预算、字段 ID 或偏移参数；调用方仅在解码失败时补充错误位置。
@@ -381,7 +422,7 @@ context.register_handler(srl::handler_key<AssetReferenceKey>(), handler);
 将所有声明枚举值按位或，自动推导允许位掩码：
 
 ```cpp
-enum class [[=srl::tag::flags{0}]] Permissions : std::uint8_t {
+enum class [[=srl::tag::bit_flag{0}]] Permissions : std::uint8_t {
     read = 1, write = 2, special = 0x80,
 };
 ```
@@ -686,30 +727,36 @@ if (auto status = srl::deserialize(block->span(), restored, context); status) {
 
 ## 编译期 Schema 树
 
-`schema(^^T).tree` 是统一的编译期结构描述。`root` 表示根节点，`value` 表示实际值节点；
-leaf 根节点额外包含 entry header，而嵌套 leaf 值仅包含 payload。通过 `tree.node(index)`、
-`tree.children(index)` 和 `tree.child(index, ordinal)` 查询节点及子节点，索引始终属于同一棵树。
+`schema(^^T).tree` 是统一的编译期结构描述。`root_node()` 和 `value_node()` 直接访问根节点和值节点；
+对应的索引为 `schema_tree::root_index`（固定为 0）和 `tree.value_index()`。
+leaf 根节点额外包含 entry header，而嵌套 leaf 值仅包含 payload。`tree[index, ordinals...]` 始终返回节点：
+首个参数是树内的全局节点索引，之后每个参数是当前节点下从 0 开始的子节点序号，不是字段 ID。
+仅需子节点索引时使用 `tree.child_indices(index)`。
 
 ```cpp
 constexpr srl::schema description(^^Profile);
 // 类型标签入口保留 reflected_stream<T> 的默认判断。
 constexpr srl::schema typed_description(std::in_place_type<Profile>);
 static_assert(srl::schema_valid(^^Profile));
-constexpr auto value = description.value;
-constexpr auto first = description.tree.child(value, 0);
-constexpr auto field_id = description.tree.node(first).id;
-constexpr auto stored_type = description.tree.node(first).type; // std::meta::info
-constexpr auto encoded_size = description.tree.node(description.root).encode_extent;
+constexpr auto value = description.tree.value_index();
+constexpr auto first = description.tree[value, 0];
+constexpr auto field_id = first.record_field().id;
+constexpr auto stored_type = first.type(); // std::meta::info
+constexpr auto encoded_size = description.root_node().encode_extent();
 ```
 
-节点包含 wire 分类、字段/基类反射信息、内存与存储类型、转换选项、容器槽位与数量约束。
+节点是只读编译期视图。`kind()` 决定可用的形状数据，例如 `leaf()` 提供 codec 和可选对象布局，
+`container()` 提供元素数量和槽位形状。`binding_kind()` 独立描述节点如何绑定到父节点：
+`record_field()` 提供 ID 和可选 fallback，`stream_field()` 没有 ID，`slot()` 区分 element、key 和 mapped。
+`field()` 访问 record 与 stream 共享的实体和转换信息。`field_id()` 在没有 ID 时返回空，而不是 0。
 record 子节点按字段 ID 排序，stream 子节点按加载顺序排列；容器只描述 element 或 key/value
 槽位，不按元素数量展开。同一类型在不同字段的 stream、forced leaf、转换及重复元素策略
 分别记录在各自节点中。leaf 的对象表示是一个叶节点，其内部成员不是独立 wire 子节点。
 
 `encode_extent` 递归计算编码长度，无法静态确定时为 `std::dynamic_extent`。
 `decode_extent` 表示解码可要求的精确 payload 长度：leaf/forced 为固定尺寸，复合节点保留
-动态尺寸，因为目标类型的编码长度并不限定所有合法输入布局。定长内部编码和解码接口要求
+动态尺寸，因为目标类型的编码长度并不限定所有合法输入布局；所有子节点解码尺寸固定的
+闭合 stream 例外，可递推精确解码尺寸。定长内部编码和解码接口要求
 静态 extent 的 span；公共字节输入在边界检查长度后再转换，不截断过长的 payload。
 
 树构建、校验和尺寸计算使用非模板 `consteval` 函数与普通循环，结果固化为静态数组。
@@ -725,21 +772,66 @@ schema 不保存对象、转换结果或运行期 handler；这些状态仍由�
 codec 与编码计划直接从 schema 节点读取字段 ID、wire type 和尺寸，不通过子计划转发这些元数据。
 非模板 `detail/codec_support.hpp` 负责公共 entry 类型检查、stream 切片、尺寸累加和重复策略选择；
 实际对象操作、计划存储布局和成功/失败状态类型仍由模板生成。
-容器元素是否需要编码缓存也由该树推导：leaf 以及不含转换或容器的定长 record/stream
-使用空槽位计划，不为每个元素分配缓存；转换结果和动态布局仍在准备阶段缓存，避免重复计算。
+容器元素是否需要编码缓存由实际准备状态决定：leaf、无转换且子树无动态状态的定长
+record/stream 与固定容器使用空槽位计划。定长、无准备副作用的 sized range 以数量与静态步长
+做一次有界乘加测长，不遍历元素；非 sized range、动态子树与转换仍按需遍历并缓存
+只有真正需要分配计划缓存的操作才构造 workspace，缓存从构造时绑定其 PMR resource
+同质原生数组的对象布局存储一次元素描述、数量及步长，复制和验证使用普通循环，
+不按元素个数实例化模板；wire 指纹仍按 v4 的原标量顺序计算
+
+### 复用准备结果
+
+需要先测长再编码到外部 span 时，可以使用同一个准备计划，避免两次调用业务转换
+
+```cpp
+srl::serialization_workspace workspace;
+auto prepared = srl::prepared_serialization<T>::prepare(workspace, value, context);
+if (!prepared) { return prepared.error(); }
+std::vector<std::byte> output(prepared->size());
+return prepared->encode(std::span{output});
+```
+
+准备计划借用源，不是对象快照，工厂拒绝临时源。源及其引用的数据必须存活且保持不变，
+包括形状、元素顺序和转换依赖；输入不能与编码输出重叠
+workspace 必须比所有使用它的计划活得更久；计划销毁后才能 reset 或复用该资源
+计划可以移动，移动后的源计划只允许销毁。context 仅在准备时参与转换，不由计划保存
+只需要写出 byte_buffer 时，直接调用一次 serialize 即可，无需先调用 serialized_size
 
 ## Schema 可视化
 
-`schema_string(^^T)` 在编译期遍历上述 schema 树，并返回具有静态存储期的
-`std::string_view`。输出包含 record 字段 ID、转换后的存储类型、leaf 固定大小、容器
-元素布局和固定元素数量；无效 schema 会在编译期被拒绝。叶节点节点区分
-`primitive-leaf`、`codec-leaf` 和 `object-leaf`。进入叶节点模式的直接成员或基类使用
-`[leaf-root member]` / `[leaf-root base]`。对象叶节点布局使用 `[wire +偏移]` 展示
-实际标量的 wire 位置、对象内偏移及大小，与编解码和输入校验使用相同的布局元数据。
+`schema_string(^^T, options)` 在编译期返回具有静态存储期的 `std::string_view`，
+无效 schema 会在编译期被拒绝。省略 `srl::schema_format_options` 时默认输出精简结构，
+同一层级的字段标签按列对齐：
+`[ID]` 标记 record 字段，`[#位置]` 标记 stream 的零基位置，`sequence[N]` 和 `map[N]`
+标记容器数量（`*` 表示动态）
 
 ```cpp
-constexpr auto schema = srl::schema_string(^^Profile);
-std::println("{}", schema);
+constexpr auto compact = srl::schema_string(^^Profile);
+constexpr auto detailed = srl::schema_string(^^Profile, {.detailed = true});
+std::println("{0}\n\n{0:d}", srl::schema_view<^^Profile>{});
+```
+
+`b<数字>` 说明符改为绘制对象 leaf 内部的内存布局字节图：`<数字>` 是每行字节数的指数
+（`b0`=1B、`b1`=2B、`b2`=4B、`b3`=8B，依此类推），省略数字时默认为 `b3`。
+每个字段用 `[字段名: 类型]` 方框表示，方框宽度按占用的字节数成比例。顶部的 `4B-` 等刻度表示行内累计字节数，
+左侧不显示行偏移，也不另列图例。跨行方框只在首行标注字段名和类型，续行用 `_` 表示，padding 用 `[.]` 表示。
+`b` 与 `d` 不可同时使用
+
+```cpp
+std::println("{0:b}\n\n{0:b2}", srl::schema_view<^^Profile>{});  // 8B/行、4B/行
+// 等价的编译期入口：
+constexpr auto memory = srl::schema_string(^^Profile,
+    {.memory_layout = true, .memory_layout_exponent = 3});
+```
+
+如果编译器在成员反射时展开了类型别名，可在显示为单个方框的成员上用注解显式保留原名；注解不改变序列化格式：
+
+```cpp
+using meters = float;
+struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] Position {
+    [[=srl::schema_type_alias{^^meters}]] meters x;
+};
+// {:b} 显示 [x: meters]
 ```
 
 元数据查询统一接收 `std::meta::info`。直接传入 alias 的反射即可保留调用处的 alias 名：
@@ -749,32 +841,41 @@ using ProfileAlias = Profile;
 constexpr auto schema = srl::schema_string(^^ProfileAlias);
 ```
 
-输出样式如下：
+Leaf 行始终显示 wire payload 字节数，不包含外层条目头；leaf 类别只在详细模式显示。
+对象 leaf 用 `|` 标记布局条目，这些条目不是独立的 wire 节点。数组只显示重复次数和一份元素布局；
+自定义 codec 不推测内部字节结构
 
 ```text
 record Profile {
-  [1] person: record Person {
-    [1] [leaf-root member] age: primitive-leaf int (size: 4 bytes)
-    [2] [leaf-root member] score: primitive-leaf double (size: 8 bytes)
+  [1] name    : sequence[*] {
+    element: char [1B]
   }
-  [2] name: container std::string (count: dynamic) {
-    element: primitive-leaf char (size: 1 byte)
+  [2] position: Vec2 [8B] {
+    | x: float [4B]
+    | y: float [4B]
   }
-  [3] [leaf-root member] active: primitive-leaf bool (size: 1 byte)
-  [4] [leaf-root member] state: primitive-leaf activity (size: 1 byte)
-  [5] position: record Vec2 {
-    [0] [leaf-root member] x: primitive-leaf float (size: 4 bytes)
-    [1] [leaf-root member] y: primitive-leaf float (size: 4 bytes)
-  }
+  [3] state   : activity [1B]
 }
 ```
 
-对象表示叶节点类型会进一步展示直接参与叶节点模式的成员和基类：
+详细模式（`{:d}`）额外显示容器类型、转换来源、字段 fallback／required 状态、
+显式重复项策略，以及对象布局的 wire／object 偏移与数组步长。嵌套数组布局的偏移相对于单个元素
 
 ```text
-object-leaf UniqueLeaf (size: 8 bytes, representation: direct) {
-  [wire +0] first: unsigned int (size: 4, object +0)
-  [wire +4] second: unsigned int (size: 4, object +4)
+Vec2 [direct leaf, 8B] {
+  | [wire/object +0] x: float [4B]
+  | [wire/object +4] y: float [4B]
+}
+```
+
+内存布局模式（`{:b}`）把同一份对象布局画成按行截断的字节图（`{:b2}` 为每行 4B）：
+
+```text
+trans2 [12B] {
+           4B-
+  [ x: float ]
+  [ y: float ]
+  [rot: float]
 }
 ```
 

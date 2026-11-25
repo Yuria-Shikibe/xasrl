@@ -62,7 +62,17 @@ namespace srl::detail {
 
         [[nodiscard]] std::expected<field_view, error> find(id_type id) const noexcept {
             std::size_t first{};
-            std::size_t count = head_.mapping_count();
+            return find(id, first);
+        }
+
+        // The schema visits strictly increasing IDs. Keep the insertion point on a
+        // miss so a fallback does not consume the next available field.
+        [[nodiscard]] std::expected<field_view, error> find(id_type id, std::size_t &cursor) const noexcept {
+            if (cursor != head_.mapping_count() && mapping_id(cursor) == id) {
+                return at(cursor++);
+            }
+            std::size_t first = cursor;
+            std::size_t count = head_.mapping_count() - first;
             while (count != 0) {
                 const auto step = count / 2;
                 const auto index = first + step;
@@ -73,10 +83,11 @@ namespace srl::detail {
                     count = step;
                 }
             }
+            cursor = first;
             if (first == head_.mapping_count() || mapping_id(first) != id) {
                 return std::unexpected{fail(error_code::missing_field, id)};
             }
-            return at(first);
+            return at(cursor++);
         }
     };
 
@@ -96,9 +107,6 @@ namespace srl::detail {
         }
         if (head.size < bytes.size()) {
             return std::unexpected{fail(error_code::trailing_bytes, std::nullopt, head.size)};
-        }
-        if (head.size < entry_head_wire_size) {
-            return std::unexpected{fail(error_code::invalid_entry_size, std::nullopt, 0)};
         }
         const auto count = head.mapping_count();
         const auto kind = head.kind();

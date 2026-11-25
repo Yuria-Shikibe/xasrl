@@ -52,7 +52,7 @@ namespace srl::storage {
             : basic_byte_buffer(other.span(), allocator) {}
 
         basic_byte_buffer(basic_byte_buffer &&other) noexcept(std::meta::is_nothrow_move_constructible_type(^^Allocator))
-            : allocator_(std::move(other.allocator_)) { take_storage(other); }
+            : allocator_(std::move(other.allocator_)) { this->take_storage(other); }
 
         ~basic_byte_buffer() { release(); }
 
@@ -147,19 +147,13 @@ namespace srl::storage {
 
         // writer initializes the returned prefix, returns a length <= size, and must not
         // mutate this buffer through another alias. Exceptions leave an empty reusable buffer.
-        // TODO force no throw?
         template<typename Writer>
             requires std::is_invocable_r_v<size_type, Writer&&, std::span<std::byte>>
         void resize_and_overwrite(size_type size, Writer &&writer) {
             reserve(size);
-            size_ = 0;
-            size_ = std::invoke_r<size_type>(std::forward<Writer>(writer), std::span{data(), size});
-        }
-
-        template<typename Writer>
-            requires std::is_nothrow_invocable_r_v<size_type, Writer&&, std::span<std::byte>>
-        void resize_and_overwrite(size_type size, Writer &&writer) {
-            reserve(size);
+            if constexpr (!std::is_nothrow_invocable_r_v<size_type, Writer&&, std::span<std::byte>>) {
+                size_ = 0;
+            }
             size_ = std::invoke_r<size_type>(std::forward<Writer>(writer), std::span{data(), size});
         }
 

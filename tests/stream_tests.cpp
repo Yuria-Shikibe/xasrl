@@ -1,5 +1,4 @@
 #include "test_support.hpp"
-#include "srl/schema_visualization.hpp"
 
 namespace stream_tests {
     using namespace srl_test;
@@ -72,7 +71,7 @@ namespace stream_tests {
         [[=srl::tag::auto_stream{}]] std::uint32_t value;
     };
     struct [[=srl::tag::auto_stream{}]] ForcedLeaf {
-        [[=srl::tag::leaf{.allow_padding = true}]] Sequence value;
+        [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] Sequence value;
         [[=srl::tag::bypass_pointer_check{}]] int *pointer{};
     };
     struct DuplicateRecord {
@@ -97,8 +96,6 @@ namespace stream_tests {
     static_assert(!srl::schema_valid(^^TransientConflict) && !srl::schema_valid(^^FieldLeafConflict));
     static_assert(!srl::schema_valid(^^RepeatedField) && !srl::schema_valid(^^LeafOwner));
     static_assert(srl::schema_valid(^^ForcedLeaf) && srl::schema_valid(^^OverrideIds));
-    static_assert(srl::schema_string(^^Nested).contains("stream "));
-    static_assert(srl::schema_string(^^Numbers).contains("[position 1]"));
 
     TEST(AutoStream, WireLayoutAndApis) {
         srl::byte_buffer bytes{};

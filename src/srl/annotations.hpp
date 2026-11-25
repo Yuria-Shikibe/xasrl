@@ -7,26 +7,36 @@
 #include <meta>
 
 #include "conversion.hpp"
+#include "detail/default_snapshot.hpp"
 #include "types.hpp"
 
 namespace srl {
     namespace defaults {
-        // An explicit fallback<> uses T{}. Unannotated fields are required.
-        // This does not re-evaluate the enclosing class's member initializer.
+        /**
+         * Value-initializes the field with `T{}` (element-wise for arrays).
+         * This is the policy of `tag::fallback{}`; it does not use the owner's initializer.
+         */
         struct initialized {};
 
-        //TODO support uninitialized ?
+        /**
+         * Restores the field value captured from `Owner{}` at compile time.
+         * If the snapshot cannot be captured, the schema is rejected.
+         */
+        struct automatic {};
 
-        // Value must be a template argument; T{Value} rejects narrowing conversions.
+        /** Assigns `T{Value}` from a compile-time constant, rejecting narrowing conversions. */
         template<auto Value>
         struct value {};
 
-        // void(T&): modifies the existing field, without a preliminary reset.
+        /** Invokes `void(T&)` on the existing field value without resetting it first. */
         template<auto Function>
         struct modifier {};
 
-        // Exactly one of T(), T(const serialization_context&), void(T&), or
-        // void(T&, const serialization_context&). Invoked only for an absent ID.
+        /**
+         * Computes a replacement value or modifies the existing field in place.
+         * Accepts exactly one of `T()`, `T(const serialization_context&)`, `void(T&)`,
+         * or `void(T&, const serialization_context&)`.
+         */
         template<auto Function>
         struct provider {};
     }
@@ -42,6 +52,13 @@ namespace srl {
 
         template<typename Policy>
         struct fallback_policy;
+
+        template<>
+        struct fallback_policy<defaults::automatic> {
+            // This policy requires a reflected entity, not just its value type.
+            template<typename T>
+            static constexpr bool valid = false;
+        };
 
         template<>
         struct fallback_policy<defaults::initialized> {
@@ -130,11 +147,11 @@ namespace srl {
     }
 
     namespace tag {
-        // [[=srl::tag::fallback{srl::defaults::value<42>{}}]]
-        // One policy per annotation; field-level validation rejects duplicates.
-        // Applies to the memory type before any storage conversion. Streams and
-        // members inside leaf objects have no independently absent IDs and
-        // reject this tag.
+        /**
+         * Makes one record field optional and applies `Policy` to its in-memory value
+         * only when its ID is absent, not when the encoded value is invalid.
+         * Stream entries and members inside leaf objects have no independent field IDs.
+         */
         template<detail::default_policy Policy = defaults::initialized>
         struct fallback {
             constexpr explicit fallback(Policy = {}) {}
@@ -149,6 +166,13 @@ namespace srl {
             }
         };
 
+        /** Shorthand for `fallback{defaults::automatic{}}`. */
+        constexpr inline fallback use_initializer{defaults::automatic{}};
+
+        /**
+         * Includes a member or direct base in a record under an explicit wire ID.
+         * Overrides the current ID in `auto_seq`; ignored inside `auto_stream`.
+         */
         struct field {
             id_type id{};
 
@@ -156,34 +180,106 @@ namespace srl {
             constexpr bool operator==(const field &) const noexcept = default;
         };
 
+        /**
+         * Encodes a type as one fixed-size payload, without nested entries.
+         * On a type, enables automatic object layout or a custom leaf codec; on a
+         * member or base, forces object-representation encoding for that field only.
+         */
         struct leaf {
-            bool allow_padding{false};
+            /** Allows non-unique object representations; encoded padding is still zeroed. */
+            bool allow_non_unique_presentation{false};
         };
 
-        // Every subset of mask, including zero, is a valid enum value.
-        struct flags {
-            // Zero infers the mask by OR-ing all enumerators; the result must be nonzero.
+        /** Treats an enum as flags: any subset of the allowed bits, including zero, is valid. */
+        struct bit_flag {
+            /** A zero mask infers the allowed bits by OR-ing all enumerators; the result must be nonzero. */
             std::uint64_t mask{};
         };
 
-        // Trust scalar value representations in this serialized subtree. This does
-        // not bypass structural parsing, schema validation or custom codec checks.
+        /**
+         * Skips built-in bool, enum and flag value checks in the annotated serialized subtree.
+         * The caller must supply valid C++ representations; structural and custom codec checks still run.
+         */
         struct bypass_validation{};
 
+        /**
+         * Builds a record with IDs starting at zero, visiting direct bases before members
+         * in declaration order. Skips `transient`; an explicit `field` ID resets the sequence.
+         */
         struct auto_seq {};
 
+        /**
+         * Encodes non-transient direct bases and members in declaration order, without
+         * record field IDs or an offset table. On a member or base, overrides that subobject only.
+         */
         struct auto_stream {};
 
+        /**
+         * Permits raw pointer and member-pointer representations in object-layout encoding.
+         * On a type, applies to its direct bases and members; on a field, applies only there.
+         * It does not make addresses portable or valid across processes.
+         */
         struct bypass_pointer_check {};
 
+        /**
+         * Excludes a field from `auto_seq`, `auto_stream` or an automatic leaf layout.
+         * Decoding leaves the excluded value unchanged; leaf layouts allow this only on members.
+         */
         struct transient {};
 
+        /**
+         * Overrides the context's duplicate policy for a container field on decode.
+         * For converted fields, applies to the storage container type.
+         */
         struct container {
+            /** Deduplicate using the container's semantics, or reject duplicate keys or elements. */
             duplicate_policy duplicates{duplicate_policy::deduplicate};
         };
     }
 
     namespace detail {
+        template<std::meta::info Entity>
+        using fallback_owner = [:std::meta::parent_of(Entity):];
+
+        template<std::meta::info Entity>
+        using fallback_value = [:std::meta::remove_cvref(std::meta::type_of(Entity)):];
+
+        template<std::meta::info Entity>
+        consteval auto capture_field_default() {
+            fallback_owner<Entity> object{};
+            using snapshot = default_snapshot<fallback_value<Entity>>;
+            if constexpr (std::meta::is_base(Entity)) {
+                return snapshot::capture((const fallback_value<Entity> &)object);
+            } else {
+                return snapshot::capture(object.[:Entity:]);
+            }
+        }
+
+        template<auto>
+        struct captured_default {};
+
+        // Requiring the complete snapshot as a template argument also rejects
+        // uninitialized values and pointers into the temporary default object.
+        template<std::meta::info Entity>
+        concept automatic_fallback_valid =
+            (std::meta::is_nonstatic_data_member(Entity) || std::meta::is_base(Entity))
+            && !std::meta::is_reference_type(std::meta::type_of(Entity))
+            && !std::meta::is_const_type(std::meta::type_of(Entity))
+            && !std::meta::is_volatile_type(std::meta::type_of(Entity))
+            && requires { fallback_owner<Entity>{}; }
+            && default_snapshot<fallback_value<Entity>>::valid
+            && requires { typename captured_default<capture_field_default<Entity>()>; };
+
+        template<std::meta::info Entity>
+            requires automatic_fallback_valid<Entity>
+        struct automatic_fallback {
+            static constexpr auto value = capture_field_default<Entity>();
+
+            static void apply(fallback_value<Entity> &out, const serialization_context &) {
+                default_snapshot<fallback_value<Entity>>::apply(out, value);
+            }
+        };
+
         consteval bool is_fallback_annotation(std::meta::info annotation) {
             const auto type = std::meta::remove_cvref(std::meta::type_of(annotation));
             return std::meta::has_template_arguments(type) && std::meta::template_of(type) == ^^tag::fallback;
@@ -210,9 +306,24 @@ namespace srl {
         inline constexpr bool fallback_valid_v = Annotation::template valid_for<T>;
 
         consteval bool fallback_valid(std::meta::info entity) {
-            return fallback_annotation_count(entity) <= 1
-                && std::meta::extract<bool>(std::meta::substitute(^^fallback_valid_v,
-                    {fallback_annotation_type(entity), std::meta::type_of(entity)}));
+            if (fallback_annotation_count(entity) > 1) { return false; }
+            const auto annotation = fallback_annotation_type(entity);
+            if (annotation == ^^tag::fallback<defaults::automatic>) {
+                return std::meta::extract<bool>(std::meta::substitute(^^automatic_fallback_valid,
+                    {std::meta::reflect_constant(entity)}));
+            }
+            return std::meta::extract<bool>(std::meta::substitute(^^fallback_valid_v,
+                {annotation, std::meta::type_of(entity)}));
+        }
+
+        // Resolve policies needing the declaring class once, while building the
+        // schema. Decoding only sees the captured field value, never an Owner{}.
+        consteval std::meta::info resolved_fallback_type(std::meta::info entity) {
+            const auto annotation = fallback_annotation_type(entity);
+            if (annotation == ^^tag::fallback<defaults::automatic>) {
+                return std::meta::substitute(^^automatic_fallback, {std::meta::reflect_constant(entity)});
+            }
+            return annotation;
         }
     }
 }

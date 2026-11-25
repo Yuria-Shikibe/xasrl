@@ -32,7 +32,10 @@ namespace srl_test {
     };
 
     static_assert(srl::schema_valid(^^LargeLeaf));
-    static_assert(srl::schema(^^LargeLeaf).tree.node(0).encode_extent == srl::schema_extent::fixed(large_extent + 16));
+    constexpr srl::schema large_leaf_schema(^^LargeLeaf);
+    static_assert(large_leaf_schema.root_node().kind() == srl::schema_kind::root);
+    static_assert(large_leaf_schema.root_node().encode_extent() == srl::schema_extent::fixed(large_extent + 16));
+    static_assert(large_leaf_schema.value_node().encode_extent() == srl::schema_extent::fixed(large_extent));
     static_assert(!srl::schema_valid(^^SizingLeaf<srl::detail::maximum_entry_size - 8>));
     static_assert(srl::schema_valid(^^std::array<int, srl::entry_metadata::max_mapping_count>));
     static_assert(!srl::schema_valid(^^std::array<int, srl::entry_metadata::max_mapping_count + 1>));
@@ -52,28 +55,31 @@ namespace srl_test {
         EXPECT_EQ(*srl::serialized_size(LargeRecord{}, default_context), 16 + 32 + large_extent + 16);
         EXPECT_EQ(*srl::serialized_size(LargeStream{}, default_context), 16 + large_extent + 16);
 
-        using codec = srl::detail::root_codec<std::vector<int>>;
-        codec::encode_plan plan;
-        plan.payload.size = large_extent;
-        ASSERT_FALSE(plan.prepare(std::vector<int>{1}, default_context));
-        EXPECT_EQ(plan.size, large_extent + 16 + sizeof(int));
-
-        codec::encode_plan overflow;
-        overflow.payload.size = srl::detail::maximum_entry_size;
-        EXPECT_EQ(overflow.prepare(std::vector<int>{1}, default_context).code, srl::error_code::entry_too_large);
+        constexpr std::array<srl::szt, 1> large_slot{large_extent};
+        const auto size = srl::detail::measure_fixed_slots(1, large_slot);
+        ASSERT_TRUE(size);
+        EXPECT_EQ(*size, large_extent + 32);
+        constexpr std::array<srl::szt, 1> overflowing_slot{srl::detail::maximum_entry_size};
+        EXPECT_EQ(srl::detail::measure_fixed_slots(1, overflowing_slot).error().code,
+                  srl::error_code::entry_too_large);
     }
 
     TEST(LargeEntries, MappingCountBoundary) {
         EXPECT_THROW((srl::entry_metadata{0x1000000u, srl::entry_kind::record}), std::out_of_range);
         EXPECT_THROW((srl::entry_metadata{srl::szt{1} << 32, srl::entry_kind::record}), std::out_of_range);
-        using codec = srl::detail::root_codec<std::vector<int>>;
-        codec::encode_plan boundary;
-        boundary.payload.slot_count = srl::entry_metadata::max_mapping_count - 1;
-        ASSERT_FALSE(boundary.prepare(std::vector<int>{1}, default_context));
-        EXPECT_EQ(boundary.payload.slot_count, srl::entry_metadata::max_mapping_count);
-        codec::encode_plan overflow;
-        overflow.payload.slot_count = srl::entry_metadata::max_mapping_count;
-        EXPECT_EQ(overflow.prepare(std::vector<int>{1}, default_context).code, srl::error_code::too_many_mappings);
+        constexpr std::array<srl::szt, 1> slot{sizeof(int)};
+        constexpr auto maximum = srl::entry_metadata::max_mapping_count;
+        const auto boundary = srl::detail::measure_fixed_slots(maximum, slot);
+        ASSERT_TRUE(boundary);
+        EXPECT_EQ(*boundary, 16 + static_cast<srl::szt>(maximum) * 20);
+        const auto overflow = srl::detail::measure_fixed_slots(maximum + 1, slot);
+        ASSERT_FALSE(overflow);
+        EXPECT_EQ(overflow.error().code, srl::error_code::too_many_mappings);
+        EXPECT_EQ(overflow.error().id, maximum);
+        constexpr std::array<srl::szt, 2> map_slots{4, 4};
+        const auto odd_mapping = srl::detail::measure_fixed_slots(maximum / 2 + 1, map_slots);
+        ASSERT_FALSE(odd_mapping);
+        EXPECT_EQ(odd_mapping.error().id, maximum);
     }
 
     TEST(LargeEntries, FullWidthWireValuesAndErrors) {

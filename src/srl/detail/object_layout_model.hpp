@@ -15,12 +15,24 @@ namespace srl::detail {
         szt wire_offset{};
         szt size{};
         validation_mode validation = validation_mode::checked;
+        // Array elements share one reflected layout. Offsets in children are
+        // relative to an element; only the repeat count scales with array size.
+        const object_field *element_fields{};
+        std::size_t element_field_count{};
+        szt element_count{};
+        szt stride{};
+        szt payload_size{};
+
+        [[nodiscard]] consteval bool repeated() const noexcept { return element_count != 0; }
+        [[nodiscard]] consteval std::span<const object_field> children() const noexcept {
+            return {element_fields, element_field_count};
+        }
     };
 
     struct object_layout {
         szt payload_size{};
 
-        //TODO directly store it as span
+        // Public structural members are required by define_static_array.
         const object_field *field_data{};
         std::size_t field_count{};
 

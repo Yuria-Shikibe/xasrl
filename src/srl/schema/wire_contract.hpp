@@ -3,6 +3,7 @@
 #include <concepts>
 #include <cstdint>
 #include <meta>
+#include <span>
 #include <utility>
 
 #include "model.hpp"
@@ -37,16 +38,28 @@ namespace srl::detail {
         return hash;
     }
 
-    consteval type_hash_type leaf_wire_type(const schema_node &node) {
-        auto hash = hash_integer(scalar_wire_type(node.type), node.encode_extent.span_extent());
-        for (const auto field: node.object.fields()) {
+    // Keep the v4 scalar visitation order even when arrays share one layout.
+    consteval type_hash_type hash_object_fields(type_hash_type hash,
+                                                std::span<const object_field> fields, szt origin = 0) {
+        for (const auto &field: fields) {
+            if (field.repeated()) {
+                for (szt i = 0; i != field.element_count; ++i) {
+                    hash = hash_object_fields(hash, field.children(), origin + field.wire_offset + i * field.stride);
+                }
+                continue;
+            }
             hash = hash_integer(hash, scalar_wire_type(field.type));
-            hash = hash_integer(hash, field.wire_offset);
+            hash = hash_integer(hash, origin + field.wire_offset);
             hash = hash_integer(hash, field.size);
             if (field.entity != std::meta::info{} && !std::meta::is_base(field.entity)) {
                 hash = hash_string(hash, std::meta::identifier_of(field.entity));
             }
         }
         return hash;
+    }
+
+    consteval type_hash_type leaf_wire_type(std::meta::info type, schema_extent extent,
+                                            std::span<const object_field> fields) {
+        return hash_object_fields(hash_integer(scalar_wire_type(type), extent.value), fields);
     }
 }

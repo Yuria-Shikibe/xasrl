@@ -14,10 +14,10 @@ namespace srl_test {
         require(std::to_integer<std::uint8_t>((bytes)[11])
                     == std::to_underlying(srl::entry_kind::record),
                 "record entry classification is incorrect");
-        constexpr auto pair_wire_type = srl::schema(^^Pair).tree.node(srl::schema(^^Pair).value).wire_type;
+        constexpr auto pair_wire_type = srl::schema(^^Pair).value_node().wire_type();
         require(get_u32(bytes, 12) == pair_wire_type,
                 "entry type hash is incorrect");
-        constexpr auto integer_wire_type = srl::schema(^^int).tree.node(srl::schema(^^int).value).wire_type;
+        constexpr auto integer_wire_type = srl::schema(^^int).value_node().wire_type();
         require(get_u32(bytes, 16) == 1 && get_u32(bytes, 20) == integer_wire_type && get_u64(bytes, 24) == 0,
                 "first mapping is incorrect");
         require(get_u32(bytes, 32) == 2 && get_u32(bytes, 36) == integer_wire_type && get_u64(bytes, 40) == 4,
@@ -197,14 +197,10 @@ namespace srl_test {
     }
 
     void test_container_entry_size_limit() {
-        using codec = srl::detail::root_codec<std::vector<int>>;
-
-        codec::encode_plan plan;
-        plan.payload.size = srl::detail::maximum_entry_size
-            - srl::detail::entry_mapping_wire_size;
-
-        const auto status = plan.prepare(std::vector<int>{1}, default_context);
-        require(status.code == srl::error_code::entry_too_large,
+        const std::array<srl::szt, 1> extent{
+            srl::detail::maximum_entry_size - srl::detail::entry_mapping_wire_size};
+        const auto status = srl::detail::measure_fixed_slots(1, extent);
+        require(!status && status.error().code == srl::error_code::entry_too_large,
                 "container encoding accepted an entry too large for the wire size field");
     }
 

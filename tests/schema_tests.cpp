@@ -1,7 +1,10 @@
 #include "srl/error.hpp"
 
 #include <gtest/gtest.h>
+#include <concepts>
 #include <limits>
+#include <map>
+#include <vector>
 
 #include "test_models.hpp"
 
@@ -123,14 +126,14 @@ namespace field_build_tests {
     };
 
     constexpr auto mixed = srl::schema(^^mixed_ids).tree;
-    constexpr auto mixed_value = mixed.child(mixed.root, 0);
-    static_assert(mixed.node(mixed_value).children_count == 5);
-    static_assert(mixed.node(mixed.child(mixed_value, 0)).id == 0);
-    static_assert(mixed.node(mixed.child(mixed_value, 1)).id == 2);
-    static_assert(mixed.node(mixed.child(mixed_value, 2)).id == 3);
-    static_assert(mixed.node(mixed.child(mixed_value, 3)).id == 10);
-    static_assert(mixed.node(mixed.child(mixed_value, 4)).id == 11);
-    static_assert(mixed.node(mixed.child(mixed_value, 1)).entity == ^^mixed_ids::reset);
+    constexpr auto mixed_value = mixed.value_index();
+    static_assert(mixed.child_indices(mixed_value).size() == 5);
+    static_assert(mixed[mixed_value, 0].record_field().id == 0);
+    static_assert(mixed[mixed_value, 1].record_field().id == 2);
+    static_assert(mixed[mixed_value, 2].record_field().id == 3);
+    static_assert(mixed[mixed_value, 3].record_field().id == 10);
+    static_assert(mixed[mixed_value, 4].record_field().id == 11);
+    static_assert(mixed[mixed_value, 1].field().entity == ^^mixed_ids::reset);
 
     struct [[=srl::tag::auto_seq{}]] terminal_id {
         [[=srl::tag::field{maximum_id}]] int last{};
@@ -175,11 +178,22 @@ namespace field_build_tests {
         [[=srl::tag::field{7}, =srl::tag::auto_stream{}]] stream_override value;
     };
     constexpr auto overridden = srl::schema(^^stream_owner).tree;
-    constexpr auto stream = overridden.child(overridden.child(overridden.root, 0), 0);
-    static_assert(overridden.node(stream).kind == srl::schema_kind::stream);
-    static_assert(overridden.node(stream).children_count == 2);
-    static_assert(!overridden.node(overridden.child(stream, 0)).has_field_id);
-    static_assert(!overridden.node(overridden.child(stream, 1)).has_field_id);
+    constexpr auto owner = overridden.value_index();
+    constexpr auto stream = overridden.child_indices(owner)[0];
+    constexpr auto second = overridden.child_indices(stream)[1];
+
+    static_assert(std::same_as<decltype(overridden[stream]), srl::schema_node>);
+    static_assert(std::same_as<decltype(overridden[owner, 0]), srl::schema_node>);
+    static_assert(std::same_as<decltype(overridden[owner, 0, 1u]), srl::schema_node>);
+    static_assert(overridden[owner, 0].kind() == srl::schema_kind::stream);
+    static_assert(overridden.child_indices(stream).size() == 2);
+    static_assert(!overridden[owner, 0, 0].field_id().has_value());
+    static_assert(!overridden[owner, 0, 1].field_id().has_value());
+    static_assert(overridden[owner, 0, 1u].field().entity == overridden[second].field().entity);
+    static_assert(overridden[srl::schema_tree::root_index, 0, 0, 1].field().entity == ^^stream_override::second);
+    constexpr auto stream_field = overridden[owner, 0, 0];
+    static_assert(stream_field.binding_kind() == srl::schema_binding_kind::stream_field);
+    static_assert(stream_field.stream_field().entity == ^^stream_override::first);
 }
 
 namespace {
@@ -194,8 +208,33 @@ namespace {
     constexpr srl::schema stream_description(^^constructed_stream);
     constexpr srl::schema typed_description(std::in_place_type<const constructed_stream &>);
     constexpr srl::schema forced_description(^^constructed_record, true);
-    static_assert(record_description.tree.node(record_description.value).kind == srl::schema_kind::record);
-    static_assert(stream_description.tree.node(stream_description.value).kind == srl::schema_kind::stream);
-    static_assert(typed_description.tree.node(typed_description.value).kind == srl::schema_kind::stream);
-    static_assert(forced_description.tree.node(forced_description.value).kind == srl::schema_kind::stream);
+    static_assert(record_description.value_node().kind() == srl::schema_kind::record);
+    static_assert(stream_description.value_node().kind() == srl::schema_kind::stream);
+    static_assert(typed_description.value_node().kind() == srl::schema_kind::stream);
+    static_assert(forced_description.value_node().kind() == srl::schema_kind::stream);
+}
+
+namespace {
+    struct annotated_field {
+        [[=srl::tag::field{0}, =srl::tag::fallback{}, =srl::conversion_tag{^^int}]]
+        int value = 3;
+    };
+
+    constexpr auto annotated_tree = srl::schema(^^annotated_field).tree;
+    constexpr auto annotated = annotated_tree[annotated_tree.value_index(), 0];
+    static_assert(annotated.kind() == srl::schema_kind::leaf);
+    static_assert(annotated.field_id() == 0);
+    static_assert(annotated.record_field().fallback_type().has_value());
+    static_assert(annotated.converted() && annotated.field().conversion == srl::schema_conversion_kind::cast);
+    static_assert(annotated.type() == annotated.field().memory_type());
+
+    constexpr auto sequence = srl::schema(std::in_place_type<std::vector<int>>).tree;
+    constexpr auto map = srl::schema(std::in_place_type<std::map<int, long>>).tree;
+    static_assert(sequence.value_node().container().shape == srl::schema_container_shape::sequence);
+    static_assert(sequence.child_indices(sequence.value_index()).size() == 1);
+    static_assert(sequence[sequence.value_index(), 0].slot().role == srl::schema_slot_role::element);
+    static_assert(map.value_node().container().shape == srl::schema_container_shape::map);
+    static_assert(map.child_indices(map.value_index()).size() == 2);
+    static_assert(map[map.value_index(), 0].slot().role == srl::schema_slot_role::key);
+    static_assert(map[map.value_index(), 1].slot().role == srl::schema_slot_role::mapped);
 }
