@@ -10,7 +10,7 @@
 
 #include "smallest_uint.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     template<unsigned Base, std::unsigned_integral T>
         requires (Base >= 2 && Base <= 36)
     [[nodiscard]] constexpr std::size_t unsigned_digit_count(T value) noexcept {
@@ -85,7 +85,7 @@ namespace srl::detail {
 
 
 
-namespace srl {
+namespace xasrl {
     // The buffer holds the longest spelling for T in Base, without a terminator.
     // Read the actual characters through view() while the result is alive.
     template<unsigned Base = 10, typename Char = char, std::integral T>

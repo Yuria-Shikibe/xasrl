@@ -4,7 +4,7 @@
 #include <limits>
 #include <type_traits>
 
-namespace srl {
+namespace xasrl {
     // Max is inclusive. Select the narrowest standard fixed-width unsigned type.
     template<std::uint64_t Max>
     using smallest_uint_t =

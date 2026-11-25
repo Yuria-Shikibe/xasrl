@@ -17,7 +17,7 @@
 #include "../detail/reflection_facts.hpp"
 #include "../detail/scalar_representation.hpp"
 
-namespace srl {
+namespace xasrl {
     consteval type_hash_type type_hash(std::meta::info type) noexcept {
         return detail::hash_string(
             detail::fnv1a32_offset,

@@ -26,56 +26,56 @@
 #include "srl/error.hpp"
 
 namespace srl_bench {
-    struct [[=srl::tag::auto_stream{}]] transform {
+    struct [[=xasrl::tag::auto_stream{}]] transform {
         float x{}, y{}, z{}, yaw{};
         bool operator==(const transform &) const = default;
     };
 
-    struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] leaf_transform {
+    struct [[=xasrl::tag::leaf{.allow_non_unique_presentation = true}]] leaf_transform {
         float x{}, y{}, z{}, yaw{};
         bool operator==(const leaf_transform &) const = default;
     };
 
     static_assert(sizeof(leaf_transform) == 16 && sizeof(leaf_transform) == sizeof(transform));
-    static_assert(srl::leaf_uses_direct_object_representation<leaf_transform>());
+    static_assert(xasrl::leaf_uses_direct_object_representation<leaf_transform>());
 
     template<typename T>
     concept transform_type = std::same_as<T, transform> || std::same_as<T, leaf_transform>;
 
     constexpr std::uint32_t transform_batch_size = 4096;
 
-    struct [[=srl::tag::auto_seq{}]] snapshot {
+    struct [[=xasrl::tag::auto_seq{}]] snapshot {
         std::uint32_t actor_id{}, flags{};
         transform pose;
         bool operator==(const snapshot &) const = default;
     };
 
-    struct [[=srl::tag::auto_stream{}]] samples {
+    struct [[=xasrl::tag::auto_stream{}]] samples {
         std::vector<std::uint32_t> values;
         bool operator==(const samples &) const = default;
     };
 
-    struct [[=srl::tag::auto_stream{}]] item {
+    struct [[=xasrl::tag::auto_stream{}]] item {
         std::uint32_t item_id{};
         std::uint16_t count{}, durability{};
         bool operator==(const item &) const = default;
     };
 
-    struct [[=srl::tag::auto_seq{}]] profile {
+    struct [[=xasrl::tag::auto_seq{}]] profile {
         std::uint32_t player_id{};
         std::string name;
         std::vector<item> inventory;
         bool operator==(const profile &) const = default;
     };
 
-    struct [[=srl::tag::auto_stream{}]] entity {
+    struct [[=xasrl::tag::auto_stream{}]] entity {
         snapshot state;
         std::string name;
         std::vector<transform> path;
         bool operator==(const entity &) const = default;
     };
 
-    struct [[=srl::tag::auto_seq{}]] scene {
+    struct [[=xasrl::tag::auto_seq{}]] scene {
         std::uint32_t revision{};
         std::vector<entity> entities;
         bool operator==(const scene &) const = default;
@@ -193,25 +193,25 @@ namespace srl_bench {
         return result;
     }
 
-    void require_success(srl::error status) {
+    void require_success(xasrl::error status) {
         if (status) {
-            throw std::runtime_error(std::string{srl::message(status.code)});
+            throw std::runtime_error(std::string{xasrl::message(status.code)});
         }
     }
 
-    template<srl::schema_storage Mode>
+    template<xasrl::schema_storage Mode>
     struct srl_codec {
-        using buffer_type = srl::byte_buffer;
-        const srl::serialization_context settings;
-        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        using buffer_type = xasrl::byte_buffer;
+        const xasrl::serialization_context settings;
+        xasrl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
 
         std::size_t encode(const auto &value, buffer_type &bytes) {
-            require_success(srl::serialize<Mode>(value, bytes, srl::srl_context{settings, recorder}));
+            require_success(xasrl::serialize<Mode>(value, bytes, xasrl::srl_context{settings, recorder}));
             return bytes.size();
         }
 
         void decode(const buffer_type &bytes, std::size_t, auto &value) const {
-            require_success(srl::deserialize(bytes.span(), value, settings));
+            require_success(xasrl::deserialize(bytes.span(), value, settings));
         }
     };
 
@@ -297,8 +297,8 @@ namespace srl_bench {
 
     template<typename Make>
     void register_workload(std::string_view name, Make make, std::int64_t items) {
-        register_codec<srl_codec<srl::schema_storage::embedded>>(name, "SRL_Embedded", make, items);
-        register_codec<srl_codec<srl::schema_storage::schema_only>>(name, "SRL_SchemaOnly", make, items);
+        register_codec<srl_codec<xasrl::schema_storage::embedded>>(name, "SRL_Embedded", make, items);
+        register_codec<srl_codec<xasrl::schema_storage::schema_only>>(name, "SRL_SchemaOnly", make, items);
         register_codec<bitsery_codec>(name, "Bitsery", make, items);
         register_codec<cereal_codec>(name, "Cereal", make, items);
     }

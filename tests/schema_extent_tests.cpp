@@ -8,14 +8,14 @@
 #include <type_traits>
 
 namespace {
-    using extent = srl::schema_extent;
-    constexpr auto maximum = srl::detail::maximum_entry_size;
+    using extent = xasrl::schema_extent;
+    constexpr auto maximum = xasrl::detail::maximum_entry_size;
     constexpr auto zero = extent::fixed(0);
     constexpr auto one = extent::fixed(1);
     constexpr auto dynamic = extent::dynamic();
     constexpr auto limit = extent::fixed(maximum);
 
-    static_assert(!std::is_convertible_v<extent, srl::szt>);
+    static_assert(!std::is_convertible_v<extent, xasrl::szt>);
     static_assert(dynamic.is_dynamic() && !limit.is_dynamic());
     static_assert(dynamic.value == std::dynamic_extent);
     static_assert(limit.value == maximum);
@@ -33,7 +33,7 @@ namespace {
 
     consteval bool fails(auto operation, std::string_view reason) {
         try { operation(); }
-        catch (const srl::detail::extent_overflow &failure) {
+        catch (const xasrl::detail::extent_overflow &failure) {
             const std::string_view message{failure.what()};
             return message.contains(reason) && message.contains("maximum_entry_size=");
         }
@@ -50,7 +50,7 @@ namespace {
     static_assert([] consteval {
         auto value = limit;
         try { value += one; }
-        catch (const srl::detail::extent_overflow &) {
+        catch (const xasrl::detail::extent_overflow &) {
             return value == limit;
         }
         return false;

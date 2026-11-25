@@ -26,80 +26,80 @@
 #include "srl/serialization.hpp"
 
 struct Person {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     int age{};
 
-    [[=srl::tag::field{.id = 2}]]
+    [[=xasrl::tag::field{.id = 2}]]
     double score{};
 
     int runtime_cookie{41};
 };
 
-struct [[=srl::tag::auto_seq{}]] Vec2 {
+struct [[=xasrl::tag::auto_seq{}]] Vec2 {
     float x{};
     float y{};
 };
 
 using Vec2Alias = Vec2;
 
-struct [[=srl::tag::auto_seq{}]] Rect {
+struct [[=xasrl::tag::auto_seq{}]] Rect {
     Vec2 minimum{};
     Vec2 maximum{};
 };
 
-struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] PaddedLeaf {
+struct [[=xasrl::tag::leaf{.allow_non_unique_presentation = true}]] PaddedLeaf {
     std::uint8_t small{};
     std::uint32_t large{};
 };
 
-struct [[=srl::tag::leaf{}]] UniqueLeaf {
+struct [[=xasrl::tag::leaf{}]] UniqueLeaf {
     std::uint32_t first{};
     std::uint32_t second{};
 };
 
-struct [[=srl::tag::leaf{}]] NonTrivialMemberwiseLeaf {
+struct [[=xasrl::tag::leaf{}]] NonTrivialMemberwiseLeaf {
     float value{};
 
     ~NonTrivialMemberwiseLeaf() {}
 };
 
-struct [[=srl::tag::leaf{}]] TransientLeaf {
+struct [[=xasrl::tag::leaf{}]] TransientLeaf {
     std::uint32_t first{};
     std::uint32_t second{};
 
-    [[=srl::tag::transient{}]]
+    [[=xasrl::tag::transient{}]]
     std::uint32_t runtime_only{17};
 
     std::uint32_t third{};
     std::uint32_t fourth{};
 };
 
-struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] TransientPointerLeaf {
-    [[=srl::tag::transient{}]]
+struct [[=xasrl::tag::leaf{.allow_non_unique_presentation = true}]] TransientPointerLeaf {
+    [[=xasrl::tag::transient{}]]
     int *runtime_pointer{};
 
     std::uint32_t value{};
 };
 
 struct InvalidRecordTransient {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     std::uint32_t serialized{};
 
-    [[=srl::tag::transient{}]]
+    [[=xasrl::tag::transient{}]]
     std::uint32_t runtime_only{};
 };
 
-struct [[=srl::tag::leaf{}]] LeafBase {
+struct [[=xasrl::tag::leaf{}]] LeafBase {
     float base_value{};
 };
 
-struct [[=srl::tag::leaf{}]] DerivedLeaf : LeafBase {
+struct [[=xasrl::tag::leaf{}]] DerivedLeaf : LeafBase {
     std::uint32_t derived_value{};
 
     ~DerivedLeaf() {}
 };
 
-struct [[=srl::tag::leaf{}]] PrivateDerivedLeaf : private LeafBase {
+struct [[=xasrl::tag::leaf{}]] PrivateDerivedLeaf : private LeafBase {
     std::uint32_t derived_value{};
 
     void set_base_value(float value) {
@@ -113,7 +113,7 @@ struct [[=srl::tag::leaf{}]] PrivateDerivedLeaf : private LeafBase {
     ~PrivateDerivedLeaf() {}
 };
 
-struct [[=srl::tag::leaf{}]] ProtectedDerivedLeaf : protected LeafBase {
+struct [[=xasrl::tag::leaf{}]] ProtectedDerivedLeaf : protected LeafBase {
     std::uint32_t derived_value{};
 
     void set_base_value(float value) {
@@ -127,43 +127,43 @@ struct [[=srl::tag::leaf{}]] ProtectedDerivedLeaf : protected LeafBase {
     ~ProtectedDerivedLeaf() {}
 };
 
-struct [[=srl::tag::leaf{}]] VirtualDerivedLeaf : virtual LeafBase {
+struct [[=xasrl::tag::leaf{}]] VirtualDerivedLeaf : virtual LeafBase {
     std::uint32_t derived_value{};
 };
 
-struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] NonTrivialPaddedLeaf {
+struct [[=xasrl::tag::leaf{.allow_non_unique_presentation = true}]] NonTrivialPaddedLeaf {
     std::string value{};
 };
 
-struct [[=srl::tag::auto_seq{}]] SmallText {
+struct [[=xasrl::tag::auto_seq{}]] SmallText {
     std::string value{};
 };
 
-struct [[=srl::tag::auto_seq{}]] AutoSequenceBase {
+struct [[=xasrl::tag::auto_seq{}]] AutoSequenceBase {
     std::uint32_t base_value{};
 };
 
-struct [[=srl::tag::auto_seq{}]] AutoSequenceRecord : AutoSequenceBase {
+struct [[=xasrl::tag::auto_seq{}]] AutoSequenceRecord : AutoSequenceBase {
     std::uint32_t first{};
 
-    [[=srl::tag::transient{}]]
+    [[=xasrl::tag::transient{}]]
     std::uint32_t runtime_only{17};
 
-    [[=srl::tag::field{.id = 4}]]
+    [[=xasrl::tag::field{.id = 4}]]
     std::string name{};
 
     bool active{};
 };
 
-struct [[=srl::tag::auto_seq{}]] AutoSequenceDuplicate {
+struct [[=xasrl::tag::auto_seq{}]] AutoSequenceDuplicate {
     std::uint32_t first{};
 
-    [[=srl::tag::field{.id = 0}]]
+    [[=xasrl::tag::field{.id = 0}]]
     std::uint32_t second{};
 };
 
-struct [[=srl::tag::auto_seq{}]] AutoSequenceOverflow {
-    [[=srl::tag::field{.id = std::numeric_limits<srl::id_type>::max()}]]
+struct [[=xasrl::tag::auto_seq{}]] AutoSequenceOverflow {
+    [[=xasrl::tag::field{.id = std::numeric_limits<xasrl::id_type>::max()}]]
     std::uint32_t first{};
 
     std::uint32_t second{};
@@ -173,26 +173,26 @@ struct AutoSequencePointerBase {
     int *base_pointer{};
 };
 
-struct [[=srl::tag::auto_seq{}]] AutoSequenceEntityBypass
-    : [[=srl::tag::bypass_pointer_check{}]] AutoSequencePointerBase {
-    [[=srl::tag::bypass_pointer_check{}]]
+struct [[=xasrl::tag::auto_seq{}]] AutoSequenceEntityBypass
+    : [[=xasrl::tag::bypass_pointer_check{}]] AutoSequencePointerBase {
+    [[=xasrl::tag::bypass_pointer_check{}]]
     int *member_pointer{};
 
     std::uint32_t value{};
 };
 
-struct [[=srl::tag::auto_seq{}]]
-       [[=srl::tag::bypass_pointer_check{}]] AutoSequenceTypeBypass {
+struct [[=xasrl::tag::auto_seq{}]]
+       [[=xasrl::tag::bypass_pointer_check{}]] AutoSequenceTypeBypass {
     int *pointer{};
     std::uint32_t value{};
 };
 
-struct [[=srl::tag::auto_seq{}]] AutoSequenceRejectedPointer {
+struct [[=xasrl::tag::auto_seq{}]] AutoSequenceRejectedPointer {
     int *pointer{};
 };
 
-struct [[=srl::tag::leaf{}]] LeafEntityBypass {
-    [[=srl::tag::bypass_pointer_check{}]]
+struct [[=xasrl::tag::leaf{}]] LeafEntityBypass {
+    [[=xasrl::tag::bypass_pointer_check{}]]
     int *pointer{};
 };
 
@@ -200,13 +200,13 @@ struct LeafPointerBase {
     int *pointer{};
 };
 
-struct [[=srl::tag::leaf{}]] LeafBaseBypass
-    : [[=srl::tag::bypass_pointer_check{}]] LeafPointerBase {};
+struct [[=xasrl::tag::leaf{}]] LeafBaseBypass
+    : [[=xasrl::tag::bypass_pointer_check{}]] LeafPointerBase {};
 
-struct [[=srl::tag::leaf{}]] RuntimeFixedSize {};
-struct [[=srl::tag::leaf{}]] DynamicSpanCodec {};
+struct [[=xasrl::tag::leaf{}]] RuntimeFixedSize {};
+struct [[=xasrl::tag::leaf{}]] DynamicSpanCodec {};
 
-namespace srl {
+namespace xasrl {
     template<>
     struct leaf_codec<RuntimeFixedSize> {
         static inline std::size_t fixed_size = 0;
@@ -249,78 +249,78 @@ enum class activity : std::uint8_t {
 };
 
 struct Profile {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     Person person{};
 
-    [[=srl::tag::field{.id = 2}]]
+    [[=xasrl::tag::field{.id = 2}]]
     std::string name{};
 
-    [[=srl::tag::field{.id = 3}]]
+    [[=xasrl::tag::field{.id = 3}]]
     bool active{};
 
-    [[=srl::tag::field{.id = 4}]]
+    [[=xasrl::tag::field{.id = 4}]]
     activity state{activity::idle};
 
 
-    [[=srl::tag::field{.id = 5}]]
+    [[=xasrl::tag::field{.id = 5}]]
     Vec2 position{};
 
     void *runtime_handle{};
 };
 
 struct Pair {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     int first{};
 
-    [[=srl::tag::field{.id = 2}]]
+    [[=xasrl::tag::field{.id = 2}]]
     int second{};
 };
 
 struct FirstOnly {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     int first{};
 };
 
 struct DuplicateIds {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     int first{};
 
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     int second{};
 };
 
 struct MarkedPointer {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     int *pointer{};
 };
 
-struct [[=srl::tag::leaf{}]] LeafPointer {
+struct [[=xasrl::tag::leaf{}]] LeafPointer {
     int *pointer{};
 };
 
-struct [[=srl::tag::leaf{}]]
-       [[=srl::tag::bypass_pointer_check{}]] BypassedLeafPointer {
+struct [[=xasrl::tag::leaf{}]]
+       [[=xasrl::tag::bypass_pointer_check{}]] BypassedLeafPointer {
     int *pointer{};
 };
 
-struct [[=srl::tag::leaf{}]] UnsupportedVariableLeaf {
+struct [[=xasrl::tag::leaf{}]] UnsupportedVariableLeaf {
     std::string value{};
 };
 
-struct [[=srl::tag::leaf{}]] AmbiguousLeaf {
-    [[=srl::tag::field{.id = 1}]]
+struct [[=xasrl::tag::leaf{}]] AmbiguousLeaf {
+    [[=xasrl::tag::field{.id = 1}]]
     int value{};
 };
 
 struct VectorField {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     std::vector<int> values{};
 };
 
 struct RejectingSetField {
-    [[=srl::tag::field{.id = 1}]]
-    [[=srl::tag::container{
-        .duplicates = srl::duplicate_policy::reject}]]
+    [[=xasrl::tag::field{.id = 1}]]
+    [[=xasrl::tag::container{
+        .duplicates = xasrl::duplicate_policy::reject}]]
     std::set<int> values{};
 };
 
@@ -332,26 +332,26 @@ struct ThirdPartyTrivial {
 };
 
 struct ForcedLeafField {
-    [[=srl::tag::field{.id = 1}]]
-    [[=srl::tag::leaf{}]]
+    [[=xasrl::tag::field{.id = 1}]]
+    [[=xasrl::tag::leaf{}]]
     ThirdPartyTrivial value{};
 };
 
 struct ForcedPointerField {
-    [[=srl::tag::field{.id = 1}]]
-    [[=srl::tag::leaf{}]]
+    [[=xasrl::tag::field{.id = 1}]]
+    [[=xasrl::tag::leaf{}]]
     int *value{};
 };
 
 struct BypassedPointerField {
-    [[=srl::tag::field{.id = 1}]]
-    [[=srl::tag::leaf{}]]
-    [[=srl::tag::bypass_pointer_check{}]]
+    [[=xasrl::tag::field{.id = 1}]]
+    [[=xasrl::tag::leaf{}]]
+    [[=xasrl::tag::bypass_pointer_check{}]]
     int *value{};
 };
 
 struct RawArrayField {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     int values[3]{};
 };
 
@@ -378,7 +378,7 @@ struct FixedSequence {
     bool operator==(const FixedSequence &) const = default;
 };
 
-namespace srl {
+namespace xasrl {
     template<>
     struct container_traits<TrackingSequence> : default_container_traits<TrackingSequence> {
         static void clear(TrackingSequence &value) {

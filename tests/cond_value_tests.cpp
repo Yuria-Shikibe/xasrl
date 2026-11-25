@@ -6,7 +6,7 @@
 #include <utility>
 
 namespace {
-    using srl::detail::cond_value;
+    using xasrl::detail::cond_value;
     using stored = cond_value<int, true>;
     using omitted = cond_value<int, false, 42>;
 

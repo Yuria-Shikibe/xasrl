@@ -18,7 +18,7 @@
 #include "utility.hpp"
 #include "scalar_representation.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     // Codec signature detection must not instantiate the validated layout: schema
     // inspection reports invalid annotations with the enclosing field path.
     consteval bool object_decode_always_succeeds(std::meta::info type,

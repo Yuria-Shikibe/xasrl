@@ -10,7 +10,7 @@
 #include <string>
 #include <utility>
 
-namespace srl {
+namespace xasrl {
     namespace detail {
         template<typename T>
         concept statically_sized_range = std::ranges::sized_range<T> && requires(T &value) { std::cw<std::ranges::size(value)>; };

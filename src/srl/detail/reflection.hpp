@@ -5,7 +5,7 @@
 
 #include "reflection_facts.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     enum class reflected_entity_kind : std::uint8_t {
         member = 1,
         base = 2,

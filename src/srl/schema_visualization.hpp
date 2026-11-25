@@ -12,7 +12,7 @@
 #include "number_to_string.hpp"
 #include "schema.hpp"
 
-namespace srl {
+namespace xasrl {
     struct schema_format_options {
         bool detailed = false;
         bool memory_layout = false;
@@ -29,7 +29,7 @@ namespace srl {
     struct schema_view {};
 }
 
-namespace srl::detail {
+namespace xasrl::detail {
     // A fixed buffer keeps consteval operation counts far lower than std::string,
     // so multiple full renders fit within the compiler's evaluation limit.
     struct schema_buffer {
@@ -510,7 +510,7 @@ namespace srl::detail {
     }
 }
 
-namespace srl {
+namespace xasrl {
     [[nodiscard]] consteval std::string_view schema_string(std::meta::info type,
                                                            schema_format_options options = {}) {
         const auto tree = detail::build_schema(type);
@@ -536,7 +536,7 @@ namespace srl {
 }
 
 template<std::meta::info Type>
-struct std::formatter<srl::schema_view<Type>, char> {
+struct std::formatter<xasrl::schema_view<Type>, char> {
     constexpr auto parse(std::format_parse_context &context) {
         auto cursor = context.begin();
         const auto end = context.end();
@@ -557,8 +557,8 @@ struct std::formatter<srl::schema_view<Type>, char> {
                 bool has_digit = false;
                 while (cursor != end && *cursor >= '0' && *cursor <= '9') {
                     const auto digit = static_cast<std::size_t>(*cursor - '0');
-                    if (digit > srl::maximum_memory_layout_exponent
-                        || value > (srl::maximum_memory_layout_exponent - digit) / 10) {
+                    if (digit > xasrl::maximum_memory_layout_exponent
+                        || value > (xasrl::maximum_memory_layout_exponent - digit) / 10) {
                         throw std::format_error("memory layout exponent out of range");
                     }
                     value = value * 10 + digit;
@@ -576,10 +576,10 @@ struct std::formatter<srl::schema_view<Type>, char> {
     }
 
     template<typename FormatContext>
-    auto format(srl::schema_view<Type>, FormatContext &context) const {
-        constexpr auto compact = srl::schema_string(Type, {});
-        constexpr auto detailed = srl::schema_string(Type, {.detailed = true});
-        constexpr auto layouts = srl::schema_memory_strings(Type);
+    auto format(xasrl::schema_view<Type>, FormatContext &context) const {
+        constexpr auto compact = xasrl::schema_string(Type, {});
+        constexpr auto detailed = xasrl::schema_string(Type, {.detailed = true});
+        constexpr auto layouts = xasrl::schema_memory_strings(Type);
 
         const auto selected = options.memory_layout
             ? layouts[options.memory_layout_exponent]
@@ -588,5 +588,5 @@ struct std::formatter<srl::schema_view<Type>, char> {
     }
 
 private:
-    srl::schema_format_options options{};
+    xasrl::schema_format_options options{};
 };

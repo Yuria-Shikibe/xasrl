@@ -11,7 +11,7 @@
 #include "../schema/mapping_layout.hpp"
 #include "utility.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     struct field_view {
         id_type id{};
         type_hash_type wire_type{};

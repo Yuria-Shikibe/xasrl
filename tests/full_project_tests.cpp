@@ -17,33 +17,33 @@
 #include <vector>
 
 namespace full_project_tests {
-    struct [[=srl::tag::leaf{}]] position {
+    struct [[=xasrl::tag::leaf{}]] position {
         std::uint32_t x{};
         std::uint32_t y{};
     };
 
     enum class state : std::uint8_t { idle = 1, active = 4 };
 
-    struct [[=srl::tag::auto_stream{}]] event {
+    struct [[=xasrl::tag::auto_stream{}]] event {
         state status{state::idle};
         std::string name;
         std::vector<position> trail;
     };
 
     struct save {
-        [[=srl::tag::field{1}]] std::uint32_t revision{};
-        [[=srl::tag::field{2}]] std::vector<event> events;
-        [[=srl::tag::field{3}]] bool enabled{};
+        [[=xasrl::tag::field{1}]] std::uint32_t revision{};
+        [[=xasrl::tag::field{2}]] std::vector<event> events;
+        [[=xasrl::tag::field{3}]] bool enabled{};
         int runtime_cookie{};
     };
 
     struct save_view {
-        [[=srl::tag::field{1}]] std::uint32_t revision{};
-        [[=srl::tag::field{3}]] bool enabled{};
+        [[=xasrl::tag::field{1}]] std::uint32_t revision{};
+        [[=xasrl::tag::field{3}]] bool enabled{};
     };
 
-    static_assert(srl::schema_valid(^^save) && srl::schema_valid(^^save_view));
-    static_assert(srl::serialized_field_count(^^save) == 3);
+    static_assert(xasrl::schema_valid(^^save) && xasrl::schema_valid(^^save_view));
+    static_assert(xasrl::serialized_field_count(^^save) == 3);
 
     [[nodiscard]] save sample() {
         return {7, {{state::active, "start", {{2, 3}, {5, 8}}},
@@ -68,40 +68,40 @@ namespace full_project_tests {
     }
 
     TEST(FullProject, PreparedAndDirectEncodingAgreeAcrossRecorderReuse) {
-        const srl::serialization_context context;
+        const xasrl::serialization_context context;
         const auto source = sample();
         const save empty{};
-        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
-        srl::byte_buffer direct;
+        xasrl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        xasrl::byte_buffer direct;
         std::vector<std::byte> output;
 
         for (const auto *input : {&source, &empty, &source}) {
             {
-                const auto measured = srl::serialized_size(recorder, *input, context);
+                const auto measured = xasrl::serialized_size(recorder, *input, context);
                 ASSERT_TRUE(measured);
-                auto prepared = srl::prepared_serialization<save>::prepare(recorder, *input, context);
+                auto prepared = xasrl::prepared_serialization<save>::prepare(recorder, *input, context);
                 ASSERT_TRUE(prepared);
                 ASSERT_EQ(prepared->size(), *measured);
                 output.resize(prepared->size());
                 ASSERT_FALSE(prepared->encode(std::span{output}));
             }
-            ASSERT_FALSE(srl::serialize(*input, direct, srl::srl_context{context, recorder}));
+            ASSERT_FALSE(xasrl::serialize(*input, direct, xasrl::srl_context{context, recorder}));
             EXPECT_TRUE(std::ranges::equal(output, direct.span()));
         }
 
         save result{.runtime_cookie = 99};
-        ASSERT_FALSE(srl::deserialize(std::span{output}, result, context));
+        ASSERT_FALSE(xasrl::deserialize(std::span{output}, result, context));
         expect_sample(result, 99);
     }
 
     TEST(FullProject, BlockRoundTripSupportsProjectionAndByteBudget) {
-        srl::serialization_context context;
+        xasrl::serialization_context context;
         const auto source = sample();
-        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
-        srl::byte_buffer bytes;
-        ASSERT_FALSE(srl::serialize(source, bytes, srl::srl_context{context, recorder}));
+        xasrl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        xasrl::byte_buffer bytes;
+        ASSERT_FALSE(xasrl::serialize(source, bytes, xasrl::srl_context{context, recorder}));
 
-        const auto pid = srl::number_to_string<10, wchar_t>(GetCurrentProcessId());
+        const auto pid = xasrl::number_to_string<10, wchar_t>(GetCurrentProcessId());
         const auto path = std::filesystem::temp_directory_path()
             / std::wstring{L"srl_full_project_"}.append(pid.view()).append(L".bin");
         struct remove_test_file {
@@ -112,48 +112,48 @@ namespace full_project_tests {
             }
         } cleanup{path};
 
-        ASSERT_FALSE(srl::write_block(path, bytes.span()));
-        const auto over_budget = srl::read_block(path, bytes.size() - 1);
+        ASSERT_FALSE(xasrl::write_block(path, bytes.span()));
+        const auto over_budget = xasrl::read_block(path, bytes.size() - 1);
         ASSERT_FALSE(over_budget);
-        EXPECT_EQ(over_budget.error().code, srl::error_code::resource_limit_exceeded);
-        const auto loaded = srl::read_block(path, bytes.size());
+        EXPECT_EQ(over_budget.error().code, xasrl::error_code::resource_limit_exceeded);
+        const auto loaded = xasrl::read_block(path, bytes.size());
         ASSERT_TRUE(loaded);
         EXPECT_EQ(*loaded, bytes);
         context.config.limits.max_input_bytes = loaded->size();
 
         save_view projection{};
-        ASSERT_FALSE(srl::deserialize(loaded->span(), projection, context));
+        ASSERT_FALSE(xasrl::deserialize(loaded->span(), projection, context));
         EXPECT_EQ(projection.revision, 7u);
         EXPECT_TRUE(projection.enabled);
 
         save result{.runtime_cookie = 17};
-        ASSERT_FALSE(srl::deserialize(loaded->span(), result, context));
+        ASSERT_FALSE(xasrl::deserialize(loaded->span(), result, context));
         expect_sample(result, 17);
     }
 
     TEST(FullProject, EveryTruncatedPrefixIsRejectedWithoutChangingTheTarget) {
-        const srl::serialization_context context;
+        const xasrl::serialization_context context;
         const auto source = sample();
-        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
-        srl::byte_buffer bytes;
-        ASSERT_FALSE(srl::serialize(source, bytes, srl::srl_context{context, recorder}));
+        xasrl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        xasrl::byte_buffer bytes;
+        ASSERT_FALSE(xasrl::serialize(source, bytes, xasrl::srl_context{context, recorder}));
         const auto seed = save{.revision = 100, .events = {{state::idle, "retained", {{9, 10}}}},
                                .enabled = false, .runtime_cookie = 99};
         auto target = seed;
-        srl::byte_buffer before, after;
-        ASSERT_FALSE(srl::serialize(seed, before, srl::srl_context{context, recorder}));
+        xasrl::byte_buffer before, after;
+        ASSERT_FALSE(xasrl::serialize(seed, before, xasrl::srl_context{context, recorder}));
 
         for (std::size_t length = 0; length < bytes.size(); ++length) {
             SCOPED_TRACE(length);
-            const auto failure = srl::deserialize(bytes.span().first(length), target, context);
+            const auto failure = xasrl::deserialize(bytes.span().first(length), target, context);
             ASSERT_TRUE(failure);
-            EXPECT_FALSE(srl::format_error(failure).empty());
-            ASSERT_FALSE(srl::serialize(target, after, srl::srl_context{context, recorder}));
+            EXPECT_FALSE(xasrl::format_error(failure).empty());
+            ASSERT_FALSE(xasrl::serialize(target, after, xasrl::srl_context{context, recorder}));
             ASSERT_EQ(after, before);
             EXPECT_EQ(target.runtime_cookie, seed.runtime_cookie);
         }
 
-        ASSERT_FALSE(srl::deserialize(bytes.span(), target, context));
+        ASSERT_FALSE(xasrl::deserialize(bytes.span(), target, context));
         expect_sample(target, 99);
     }
 }

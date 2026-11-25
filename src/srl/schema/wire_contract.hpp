@@ -9,7 +9,7 @@
 #include "model.hpp"
 #include "../codec/base.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     consteval type_hash_type hash_integer(type_hash_type hash, szt value) {
         for (unsigned shift = 0; shift != 64; shift += 8) {
             hash = hash_byte(hash, static_cast<std::uint8_t>(value >> shift));

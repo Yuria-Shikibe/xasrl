@@ -22,7 +22,7 @@
 #include "../container.hpp"
 #include "../conversion.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     enum class field_mode { explicit_record, automatic_record, stream };
 
     struct field_build_context {
@@ -428,6 +428,10 @@ namespace srl::detail {
             const bool stream = context.stream();
             const bool automatic = context.automatic();
             const bool serialized = automatic || facts.fields == 1;
+            if ((stream || !serialized || facts.transient != 0)
+                && annotation_count(entity, ^^tag::accept_id) != 0) {
+                reject(schema_error::conflicting_annotations, entity, "accept_id requires a record field");
+            }
             if (annotation_count(entity, ^^tag::inline_mapping) != 0 && (!serialized || facts.transient != 0)) {
                 reject(schema_error::conflicting_annotations, entity, "inline_mapping requires a serialized field");
             }
@@ -495,6 +499,18 @@ namespace srl::detail {
             field.handler_id = conversion.handler_id;
         }
 
+        consteval std::span<const id_type> accepted_ids(std::meta::info entity, id_type primary_id) {
+            std::vector<id_type> ids;
+            for (auto annotation: std::meta::annotations_of_with_type(entity, ^^tag::accept_id)) {
+                const auto id = std::meta::extract<tag::accept_id>(annotation).id;
+                if (id == primary_id || std::ranges::find(ids, id) != ids.end()) {
+                    reject(schema_error::conflicting_annotations, entity, "accept_id must be distinct from the primary ID and other aliases");
+                }
+                ids.push_back(id);
+            }
+            return ids.empty() ? std::span<const id_type>{} : std::define_static_array(ids);
+        }
+
         consteval std::optional<schema_seed> field(std::meta::info entity, field_build_context &context) {
             const field_metadata metadata{entity};
             const auto &facts = metadata.facts;
@@ -534,9 +550,11 @@ namespace srl::detail {
                 seed.duplicates = std::meta::extract<tag::container>(metadata.annotation(^^tag::container)).duplicates == duplicate_policy::reject
                     ? schema_duplicates::reject : schema_duplicates::deduplicate;
             }
+            const auto aliases = context.stream() ? std::span<const id_type>{} : accepted_ids(entity, id);
             seed.binding = context.stream()
                 ? schema_binding{.kind = schema_binding_kind::stream_field, .stream = binding}
-                : schema_binding{.kind = schema_binding_kind::record_field, .record = {binding, id, fallback}};
+                : schema_binding{.kind = schema_binding_kind::record_field,
+                    .record = {binding, id, fallback, aliases.data(), aliases.size()}};
             return seed;
         }
     };

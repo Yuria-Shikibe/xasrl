@@ -11,7 +11,7 @@
 #include "detail/default_snapshot.hpp"
 #include "types.hpp"
 
-namespace srl {
+namespace xasrl {
 
     namespace defaults {
         /**
@@ -183,6 +183,36 @@ namespace srl {
 
             constexpr auto operator<=>(const field &) const noexcept = default;
             constexpr bool operator==(const field &) const noexcept = default;
+        };
+
+        /** Adds an incoming ID for in-memory assignment only. May be repeated. */
+        struct [[=target::data]] accept_id {
+            id_type id{};
+        };
+
+        /** Adds an incoming member for in-memory assignment only. May be repeated. */
+        struct [[=target::data]] accept_member {
+            std::meta::info where;
+
+            consteval accept_member() = default;
+
+            consteval explicit accept_member(std::meta::info where)
+                : where(where) {
+                if (!std::meta::is_nonstatic_data_member(where)) {
+                    //TODO throw here
+                }
+            }
+
+
+            consteval explicit accept_member(std::meta::info class_type, std::meta::info base_type){
+                for (auto b : std::meta::bases_of(class_type, std::meta::access_context::unchecked())) {
+                    if (std::meta::type_of(b) == base_type) {
+                        where = b;
+                    }
+                }
+
+                //TODO throw
+            }
         };
 
         /**

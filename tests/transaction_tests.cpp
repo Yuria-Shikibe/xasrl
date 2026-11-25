@@ -5,13 +5,13 @@
 #include <vector>
 
 namespace {
-    struct [[=srl::tag::auto_seq{}]] allocated_record {
+    struct [[=xasrl::tag::auto_seq{}]] allocated_record {
         std::pmr::vector<int> values;
         std::array<std::pmr::vector<int>, 2> nested;
-        [[=srl::tag::transient{}]] std::pmr::vector<int> cache;
+        [[=xasrl::tag::transient{}]] std::pmr::vector<int> cache;
     };
 
-    struct [[=srl::tag::auto_seq{}]] allocated_native_arrays {
+    struct [[=xasrl::tag::auto_seq{}]] allocated_native_arrays {
         std::pmr::vector<int> values[2][2];
         int tail;
     };
@@ -46,12 +46,12 @@ namespace {
 
     TEST(Transaction, PreservesAllocatorForRootRecordAndArrays) {
         tracking_resource memory;
-        srl::serialization_context context;
-        srl::byte_buffer bytes;
+        xasrl::serialization_context context;
+        xasrl::byte_buffer bytes;
         const std::vector<int> source{1, 2, 3};
-        ASSERT_FALSE(srl::serialize(source, bytes, context));
+        ASSERT_FALSE(xasrl::serialize(source, bytes, context));
         std::pmr::vector<int> root({8, 9}, &memory);
-        ASSERT_FALSE(srl::deserialize(bytes.span(), root, context));
+        ASSERT_FALSE(xasrl::deserialize(bytes.span(), root, context));
         EXPECT_EQ(root.get_allocator().resource(), &memory);
         EXPECT_TRUE(std::ranges::equal(root, source));
 
@@ -60,32 +60,32 @@ namespace {
             {std::pmr::vector<int>({5}, &memory), std::pmr::vector<int>({6}, &memory)},
             std::pmr::vector<int>({99}, &memory),
         };
-        auto copy = srl::transaction_traits<allocated_record>::clone(record);
+        auto copy = xasrl::transaction_traits<allocated_record>::clone(record);
         EXPECT_EQ(copy.values.get_allocator().resource(), &memory);
         EXPECT_EQ(copy.nested[1].get_allocator().resource(), &memory);
         EXPECT_EQ(copy.cache.get_allocator().resource(), &memory);
-        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
-        ASSERT_FALSE(srl::serialize(record, bytes, srl::srl_context{context, recorder}));
+        xasrl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        ASSERT_FALSE(xasrl::serialize(record, bytes, xasrl::srl_context{context, recorder}));
         record.values[0] = 42;
-        ASSERT_FALSE(srl::deserialize(bytes.span(), record, context));
+        ASSERT_FALSE(xasrl::deserialize(bytes.span(), record, context));
         EXPECT_EQ(record.values[0], 4);
         EXPECT_EQ(record.cache[0], 99);
         EXPECT_EQ(record.nested[0].get_allocator().resource(), &memory);
 
         std::pmr::vector<int> array[]{std::pmr::vector<int>({1}, &memory)};
-        ASSERT_FALSE(srl::serialize(array, bytes, srl::srl_context{context, recorder}));
-        ASSERT_FALSE(srl::deserialize(bytes.span(), array, context));
+        ASSERT_FALSE(xasrl::serialize(array, bytes, xasrl::srl_context{context, recorder}));
+        ASSERT_FALSE(xasrl::deserialize(bytes.span(), array, context));
         EXPECT_EQ(array[0].get_allocator().resource(), &memory);
     }
 
     TEST(Transaction, MalformedInputPreservesAllocatorAndContents) {
         tracking_resource memory;
-        srl::serialization_context context;
-        srl::byte_buffer bytes;
-        ASSERT_FALSE(srl::serialize(std::vector<int>{1, 2}, bytes, context));
+        xasrl::serialization_context context;
+        xasrl::byte_buffer bytes;
+        ASSERT_FALSE(xasrl::serialize(std::vector<int>{1, 2}, bytes, context));
         bytes[27] = std::byte{0};
         std::pmr::vector<int> out({99}, &memory);
-        EXPECT_TRUE(srl::deserialize(bytes.span(), out, context));
+        EXPECT_TRUE(xasrl::deserialize(bytes.span(), out, context));
         EXPECT_EQ(out.get_allocator().resource(), &memory);
         ASSERT_EQ(out.size(), 1);
         EXPECT_EQ(out[0], 99);
@@ -96,7 +96,7 @@ namespace {
         allocated_native_arrays value{{{
             std::pmr::vector<int>({1}, &memory), std::pmr::vector<int>({2}, &memory)}, {
             std::pmr::vector<int>({3}, &memory), std::pmr::vector<int>({4}, &memory)}}, 7};
-        auto staged = srl::transaction_traits<allocated_native_arrays>::clone(value);
+        auto staged = xasrl::transaction_traits<allocated_native_arrays>::clone(value);
         for (const auto &row: staged.values) {
             for (const auto &element: row) {
                 EXPECT_EQ(element.get_allocator().resource(), &memory);
@@ -104,15 +104,15 @@ namespace {
         }
         EXPECT_EQ(staged.tail, 7);
         staged.values[1][1][0] = 42;
-        srl::transaction_traits<allocated_native_arrays>::commit(value, staged);
+        xasrl::transaction_traits<allocated_native_arrays>::commit(value, staged);
         EXPECT_EQ(value.values[1][1][0], 42);
         EXPECT_EQ(staged.values[1][1][0], 4);
-        srl::serialization_context context;
-        srl::byte_buffer bytes;
-        srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
-        ASSERT_FALSE(srl::serialize(value, bytes, srl::srl_context{context, recorder}));
+        xasrl::serialization_context context;
+        xasrl::byte_buffer bytes;
+        xasrl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+        ASSERT_FALSE(xasrl::serialize(value, bytes, xasrl::srl_context{context, recorder}));
         value.values[0][0][0] = 99;
-        ASSERT_FALSE(srl::deserialize(bytes.span(), value, context));
+        ASSERT_FALSE(xasrl::deserialize(bytes.span(), value, context));
         EXPECT_EQ(value.values[0][0][0], 1);
         EXPECT_EQ(value.values[1][1].get_allocator().resource(), &memory);
     }
@@ -136,7 +136,7 @@ namespace {
             40,
             {{std::pmr::vector<int>({50}, &second_resource), std::pmr::vector<int>({60}, &first_resource)}},
         };
-        auto copy = srl::transaction_traits<mixed_allocated_arrays>::clone(original);
+        auto copy = xasrl::transaction_traits<mixed_allocated_arrays>::clone(original);
         EXPECT_EQ(copy.prefix.get_allocator().resource(), &first_resource);
         EXPECT_EQ(copy.prefix[0], 10);
         EXPECT_EQ(copy.first[0].get_allocator().resource(), &first_resource);
@@ -149,7 +149,7 @@ namespace {
         EXPECT_EQ(copy.second[0][0][0], 50);
         EXPECT_EQ(copy.second[0][1][0], 60);
         copy.first[1][0] = 99;
-        srl::transaction_traits<mixed_allocated_arrays>::commit(original, copy);
+        xasrl::transaction_traits<mixed_allocated_arrays>::commit(original, copy);
         EXPECT_EQ(original.first[1][0], 99);
         EXPECT_EQ(copy.first[1][0], 30);
     }

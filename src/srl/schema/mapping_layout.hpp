@@ -9,7 +9,7 @@
 
 #include "model.hpp"
 
-namespace srl {
+namespace xasrl {
     enum class schema_storage { embedded, schema_only };
 
     namespace detail {

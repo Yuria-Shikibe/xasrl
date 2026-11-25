@@ -7,7 +7,7 @@
 #include "../types.hpp"
 #include "validation.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     struct object_field {
         std::meta::info type{};
         std::meta::info entity{};

@@ -58,7 +58,7 @@ issues. Keep C++ exceptions enabled.
   Do not replace them merely because an IDE or older compiler rejects them.
 - Follow nearby formatting: four-space indentation, opening braces on the same
   line, and `#pragma once` in headers. Library identifiers use `snake_case` and
-  belong in `srl` or an appropriate nested namespace.
+  belong in `xasrl` or an appropriate nested namespace.
 - Make headers self-contained by including the standard headers they use.
 - Prefer concepts, `requires`, `constexpr`, `consteval`, and `static_assert` to
   encode requirements and diagnose invalid schemas at compile time.

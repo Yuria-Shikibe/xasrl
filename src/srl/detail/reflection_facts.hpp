@@ -8,7 +8,7 @@
 
 #include "../annotations.hpp"
 
-namespace srl {
+namespace xasrl {
     consteval std::meta::info recursively_dealias(std::meta::info info) {
         while (std::meta::is_type_alias(info)) {
             info = std::meta::dealias(info);
@@ -18,7 +18,7 @@ namespace srl {
 
 }
 
-namespace srl::detail {
+namespace xasrl::detail {
     consteval std::size_t annotation_count(std::meta::info entity, std::meta::info annotation) {
         entity = recursively_dealias(entity);
         return std::meta::annotations_of_with_type(entity, annotation).size();
@@ -106,7 +106,8 @@ namespace srl::detail {
             const entity_facts facts{entity};
             if (annotation_count(entity, ^^tag::inline_mapping) != 0 || facts.streams != 0 || facts.transient > 1 || facts.bypass > 1 || facts.validation_bypasses > 1
                 || facts.fields != 0 || facts.leaves != 0 || facts.containers != 0
-                || facts.fallbacks != 0 || facts.conversions != 0) {
+                || facts.fallbacks != 0 || facts.conversions != 0
+                || annotation_count(entity, ^^tag::accept_id) != 0) {
                 return entity;
             }
             if (facts.transient == 1) {

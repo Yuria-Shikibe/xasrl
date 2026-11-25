@@ -22,7 +22,7 @@
 #include "../number_to_string.hpp"
 #include "utility.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     [[nodiscard]] inline error windows_io_error(error_code code, DWORD native_error = GetLastError()) noexcept {
         return fail(code, std::nullopt, 0, std::error_code{static_cast<int>(native_error), std::system_category()});
     }

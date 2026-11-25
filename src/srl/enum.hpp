@@ -14,7 +14,7 @@
 #include "annotations.hpp"
 #include "schema/diagnostic.hpp"
 
-namespace srl {
+namespace xasrl {
     namespace detail {
 #if defined(__SIZEOF_INT128__)
         using enum_max_underlying_type = unsigned __int128;
@@ -219,7 +219,7 @@ namespace srl {
     template<typename Enum>
         requires (std::meta::is_enum_type(^^Enum))
     [[nodiscard]] constexpr bool enum_contains(Enum value) noexcept {
-        return srl::enum_contains<Enum>(std::to_underlying(value));
+        return xasrl::enum_contains<Enum>(std::to_underlying(value));
     }
 
 }

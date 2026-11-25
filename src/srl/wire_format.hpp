@@ -6,7 +6,7 @@
 
 #include "types.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
         constexpr std::uint64_t storage_magic = 0x31304e49424c5253ull;
         constexpr std::uint32_t storage_version = 5;
         constexpr std::uint32_t compression_none = 0;

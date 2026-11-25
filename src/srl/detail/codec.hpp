@@ -33,7 +33,7 @@
 #define SRL_NO_UNIQUE_ADDRESS [[no_unique_address]]
 #endif
 
-namespace srl::detail {
+namespace xasrl::detail {
     template<codec_status Status>
     constexpr Status locate_error(Status failure, std::optional<id_type> id, szt offset = 0) noexcept {
         return failure.set_id(id).rebase(offset);

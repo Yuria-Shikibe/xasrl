@@ -68,21 +68,21 @@
 对象编解码统一写入调用方提供的目标，参数顺序为输入、输出、上下文：
 
 ```cpp
-srl::serialization_context context;
-srl::byte_buffer bytes;
-if (auto status = srl::serialize(value, bytes, context); status) {
+xasrl::serialization_context context;
+xasrl::byte_buffer bytes;
+if (auto status = xasrl::serialize(value, bytes, context); status) {
     return status;
 }
 T restored{};
-if (auto status = srl::deserialize(bytes.span(), restored, context); status) {
+if (auto status = xasrl::deserialize(bytes.span(), restored, context); status) {
     return status;
 }
 ```
 
-状态转为 `bool` 时，`true` 表示失败。`deserialize` 返回 `srl::error`，`error{}` 表示成功。
+状态转为 `bool` 时，`true` 表示失败。`deserialize` 返回 `xasrl::error`，`error{}` 表示成功。
 `serialize` 在输出为精确长度的固定 span、且准备和编码均无可恢复错误时返回
-`srl::always_success`，其余情况返回 `srl::error`。推荐用 `auto` 保留返回类型，
-也可以通过隐式转换存为 `srl::error`。没有返回新对象、非事务式解码、
+`xasrl::always_success`，其余情况返回 `xasrl::error`。推荐用 `auto` 保留返回类型，
+也可以通过隐式转换存为 `xasrl::error`。没有返回新对象、非事务式解码、
 对象直接存取文件的另一套入口，也不提供旧名称别名。
 
 `serialize` 支持 `byte_buffer&` 和 `std::span<std::byte, Extent>` 两种输出：
@@ -111,17 +111,17 @@ if (auto status = srl::deserialize(bytes.span(), restored, context); status) {
 定长类型可以只根据类型在编译期取得完整文档的尺寸，包括文档头、映射定义（如果写入）和根 entry：
 
 ```cpp
-constexpr auto size = srl::serialized_size<FixedRecord>();
+constexpr auto size = xasrl::serialized_size<FixedRecord>();
 std::array<std::byte, size> bytes;
-if (auto status = srl::serialize(value, std::span{bytes}, context); status) {
+if (auto status = xasrl::serialize(value, std::span{bytes}, context); status) {
     return status;
 }
 ```
 
-`serialized_size<T>()` 是 `consteval noexcept`，直接返回 `srl::szt`，仅对定长类型可用。
+`serialized_size<T>()` 是 `consteval noexcept`，直接返回 `xasrl::szt`，仅对定长类型可用。
 统一的 `serialized_size(value, context)` 调用对定长类型选择 `constexpr noexcept` 重载，
 同样直接返回尺寸，不执行转换、不绑定 handler；尺寸可知不代表实际编码一定成功。
-变长类型返回 `std::expected<srl::szt, srl::error>`，可能调用转换及 handler。需要逐元素记录的
+变长类型返回 `std::expected<xasrl::szt, xasrl::error>`，可能调用转换及 handler。需要逐元素记录的
 变长类型须调用 `serialized_size(recorder, value, context)`。分配外部缓冲时先检查测量结果，
 再提供精确长度的 span。
 
@@ -143,12 +143,12 @@ span 的 `Extent` 从实参推导，类型编码尺寸与 span 长度均已知�
 
 ## Tag 的适用位置
 
-SRL 的 tag 声明用 `[[=...]]` 附上 `srl::tag::target` 位掩码，类似 Java 的 `@Target`。
+SRL 的 tag 声明用 `[[=...]]` 附上 `xasrl::tag::target` 位掩码，类似 Java 的 `@Target`。
 例如，`auto_stream` 标有 `compound | member_field | base_class`，分别表示类类型声明、
 非静态数据成员和直接基类；`bit_flag` 标有 `enum_type`，表示枚举类型声明，区别于枚举项 `enumerator`。
 
-工具可用 `std::meta::annotations_of_with_type(^^srl::tag::auto_stream, ^^srl::tag::target)`
-查询，并用 `std::meta::extract<srl::tag::target>` 读取掩码。
+工具可用 `std::meta::annotations_of_with_type(^^xasrl::tag::auto_stream, ^^xasrl::tag::target)`
+查询，并用 `std::meta::extract<xasrl::tag::target>` 读取掩码。
 默认只提供位置提示；`srl.tests` 用 `SRL_VALIDATE_ANNOTATION_TARGETS=1` 开启编译期位置检查，
 违规会报告 `invalid_annotation_target`。具体类型、注解组合及模式限制仍由原有 schema 规则校验。
 
@@ -158,10 +158,10 @@ SRL 的 tag 声明用 `[[=...]]` 附上 `srl::tag::target` 位掩码，类似 Ja
 
 ```cpp
 struct Person {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     int age{};
 
-    [[=srl::tag::field{.id = 2}]]
+    [[=xasrl::tag::field{.id = 2}]]
     double score{};
 
     void *runtime_object{}; // 不参与序列化。
@@ -176,7 +176,7 @@ bit-field 和没有序列化规则的字段都会使 `schema_valid(^^T)` 返回 
 会被忽略。因此同一份二进制可以转换为多个字段兼容的元数据类型。
 
 缺失字段默认返回 `missing_field`，且目标保持不变。只有显式附加
-`[[=srl::tag::fallback{}]]` 的字段才使用字段类型的 `T{}`；这不会重新求值宿主类型的
+`[[=xasrl::tag::fallback{}]]` 的字段才使用字段类型的 `T{}`；这不会重新求值宿主类型的
 成员初始化器。`fallback{defaults::value<42>{}}` 指定固定默认值，`provider` 和
 `modifier` 支持业务生成和修改。fallback 仅用于缺失字段，不能修复存在但损坏的数据。
 该策略保存在 `schema_node::fallback_type`，编解码与 schema 展示共同读取它。
@@ -187,10 +187,10 @@ bit-field 和没有序列化规则的字段都会使 `schema_valid(^^T)` 返回 
 
 ```cpp
 struct Player {
-    [[=srl::tag::field{1}]]
+    [[=xasrl::tag::field{1}]]
     int id{};
 
-    [[=srl::tag::field{2}, =srl::tag::fallback{srl::defaults::automatic{}}]]
+    [[=xasrl::tag::field{2}, =xasrl::tag::fallback{xasrl::defaults::automatic{}}]]
     int hp = 100;
 };
 ```
@@ -247,17 +247,17 @@ GCC 的异常诊断包含错误原因、根类型到出错实体的路径，以�
 的下一个值继续，类似枚举值的自动顺延。重复 ID 或顺延溢出会使 schema 无效。
 
 ```cpp
-struct [[=srl::tag::auto_seq{}]] Base {
+struct [[=xasrl::tag::auto_seq{}]] Base {
     std::uint32_t base_value{}; // ID 0
 };
 
-struct [[=srl::tag::auto_seq{}]] State : Base {
+struct [[=xasrl::tag::auto_seq{}]] State : Base {
     std::uint32_t value{}; // ID 1
 
-    [[=srl::tag::transient{}]]
+    [[=xasrl::tag::transient{}]]
     void *runtime_only{}; // 跳过
 
-    [[=srl::tag::field{.id = 4}]]
+    [[=xasrl::tag::field{.id = 4}]]
     std::string name{}; // ID 4
 
     bool active{}; // ID 5
@@ -276,11 +276,11 @@ struct Plain {
     std::string name;
 };
 
-struct [[=srl::tag::auto_stream{}]] State
-    : [[=srl::tag::auto_stream{}]] Plain {
-    [[=srl::tag::auto_stream{}]] Plain detail;
+struct [[=xasrl::tag::auto_stream{}]] State
+    : [[=xasrl::tag::auto_stream{}]] Plain {
+    [[=xasrl::tag::auto_stream{}]] Plain detail;
     bool active{};
-    [[=srl::tag::transient{}]] void *cache{};
+    [[=xasrl::tag::transient{}]] void *cache{};
 };
 ```
 
@@ -304,9 +304,23 @@ stream header 记录由字段顺序、名称和 wire 类型生成的布局指纹
 `serialized_field_count(^^T)` 返回非 transient 实体数，`schema_string(^^T)` 展示加载顺序。
 这里的“流”指字节区间上的顺序消费，不提供分块或异步 I/O。
 
+## 内存对象赋值
+
+包含 `srl/mem/struct_transform.hpp` 后，用 `xasrl::mem::transform_assign(dst, src)` 对两个 record 的直接字段赋值，
+源为左值时按左值赋值，传入 `std::move(src)` 时按右值赋值。
+两端 record 的拷贝或移动构造、赋值函数可以由编译器隐式声明或显式写成 `= default`，
+但不能自定义实现或显式写成 `= delete`。
+目标字段优先匹配同主 ID 的源字段，否则尝试目标字段的 `[[=xasrl::tag::accept_id{旧ID}]]`。
+没有匹配时保留目标原值；多个别名同时命中、字段不可赋值或算术转换发生窄化时拒绝编译。
+跨版本重定向宜使用显式 ID，避免字段重排改变 `auto_seq` 分配的 ID
+
+别名仅在内存赋值时生效，不影响序列化格式，也不会触发序列化转换或缺失字段的 fallback。
+赋值按目标 ID 顺序执行，不递归匹配。移动时同一个源字段只能匹配一个目标字段；
+移动赋值抛出异常时直接传播，不回滚，也不保证源对象或目标对象的状态
+
 ## 字段表示转换
 
-`srl::conversion_tag` 将字段的内存类型 `MemTy` 映射到编译期确定的持久化类型 `SrlTy`：
+`xasrl::conversion_tag` 将字段的内存类型 `MemTy` 映射到编译期确定的持久化类型 `SrlTy`：
 
 ```cpp
 struct conversion_tag {
@@ -329,8 +343,8 @@ struct RuntimeCount {
 };
 
 struct Counters {
-    [[=srl::tag::field{1}]]
-    [[=srl::conversion_tag{^^int}]]
+    [[=xasrl::tag::field{1}]]
+    [[=xasrl::conversion_tag{^^int}]]
     RuntimeCount count;
 };
 ```
@@ -348,24 +362,24 @@ struct Asset;
 struct AssetReferenceKey {};
 
 struct RenderState {
-    [[=srl::tag::field{1}]]
-    [[=srl::conversion_tag{^^std::string, srl::handler_key<AssetReferenceKey>()}]]
+    [[=xasrl::tag::field{1}]]
+    [[=xasrl::conversion_tag{^^std::string, xasrl::handler_key<AssetReferenceKey>()}]]
     Asset *asset{};
 };
 
-class AssetHandler : public srl::typed_reference_handler<Asset*, std::string> {
-    srl::error to_storage(Asset *const &mem, std::string &srl) override;
-    srl::error from_storage(Asset *&mem, const std::string &srl) override;
+class AssetHandler : public xasrl::typed_reference_handler<Asset*, std::string> {
+    xasrl::error to_storage(Asset *const &mem, std::string &srl) override;
+    xasrl::error from_storage(Asset *&mem, const std::string &srl) override;
     // Implement using the application's asset registry.
 };
 
 AssetHandler handler;
-srl::serialization_context context;
-context.register_handler(srl::handler_key<AssetReferenceKey>(), handler);
-// srl::byte_buffer bytes;
-// auto encoded = srl::serialize(state, bytes, context);
+xasrl::serialization_context context;
+context.register_handler(xasrl::handler_key<AssetReferenceKey>(), handler);
+// xasrl::byte_buffer bytes;
+// auto encoded = xasrl::serialize(state, bytes, context);
 // RenderState restored{};
-// After checking encoded, call srl::deserialize(bytes.span(), restored, context).
+// After checking encoded, call xasrl::deserialize(bytes.span(), restored, context).
 ```
 
 上下文使用非拥有的 `unordered_map<const void*, context_reference_handler*>`。
@@ -417,7 +431,7 @@ context.register_handler(srl::handler_key<AssetReferenceKey>(), handler);
 将所有声明枚举值按位或，自动推导允许位掩码：
 
 ```cpp
-enum class [[=srl::tag::bit_flag{0}]] Permissions : std::uint8_t {
+enum class [[=xasrl::tag::bit_flag{0}]] Permissions : std::uint8_t {
     read = 1, write = 2, special = 0x80,
 };
 ```
@@ -431,13 +445,13 @@ enum class [[=srl::tag::bit_flag{0}]] Permissions : std::uint8_t {
 
 ## 错误展示
 
-`srl::error` 保持轻量，不在返回错误时分配文本。需要日志时显式包含并调用：
+`xasrl::error` 保持轻量，不在返回错误时分配文本。需要日志时显式包含并调用：
 
 ```cpp
 #include "srl/diagnostics.hpp"
 
-auto text = srl::format_error(status);
-auto located = srl::format_error(status, "profile.active");
+auto text = xasrl::format_error(status);
+auto located = xasrl::format_error(status, "profile.active");
 // invalid_bool path=profile.active id=0 offset=123
 ```
 
@@ -468,8 +482,8 @@ unordered 和 multi 变体。单值容器使用一个 mapping 槽位表示一个
 
 ```cpp
 template<>
-struct srl::container_traits<MyContainer>
-    : srl::default_container_traits<MyContainer> {
+struct xasrl::container_traits<MyContainer>
+    : xasrl::default_container_traits<MyContainer> {
     static void clear(MyContainer &value);
     static void reserve(MyContainer &value, std::size_t size); // 可选
     static void insert(MyContainer &value, element_type element);
@@ -479,16 +493,16 @@ struct srl::container_traits<MyContainer>
 解码唯一 set/map 时默认沿用容器语义去重。根容器通过上下文请求拒绝重复项：
 
 ```cpp
-srl::serialization_context context{
-    srl::serialization_config{.duplicates = srl::duplicate_policy::reject}};
+xasrl::serialization_context context{
+    xasrl::serialization_config{.duplicates = xasrl::duplicate_policy::reject}};
 ```
 
 反射字段可用独立 tag 覆盖上下文策略：
 
 ```cpp
-[[=srl::tag::field{.id = 1}]]
-[[=srl::tag::container{
-    .duplicates = srl::duplicate_policy::reject}]]
+[[=xasrl::tag::field{.id = 1}]]
+[[=xasrl::tag::container{
+    .duplicates = xasrl::duplicate_policy::reject}]]
 std::set<int> ids;
 ```
 
@@ -498,7 +512,7 @@ std::set<int> ids;
 处标记：
 
 ```cpp
-struct [[=srl::tag::leaf{}]] Vec2 {
+struct [[=xasrl::tag::leaf{}]] Vec2 {
     float x{};
     float y{};
 };
@@ -525,12 +539,12 @@ struct leaf {
 不会进入 C++ 对象。无 padding、无 transient 的布局仍可合并为一次 `memcpy`。
 包含 union 的自动对象布局无效，必须使用能表达活动分支的自定义 codec。
 
-`[[=srl::tag::bypass_validation{}]]` 可标记类型、成员或基类，跳过该序列化子树的
+`[[=xasrl::tag::bypass_validation{}]]` 可标记类型、成员或基类，跳过该序列化子树的
 内建标量值域检查，包括 bool 的 `0/1` 检查、枚举成员检查和 flags 掩码检查：
 
 ```cpp
-struct [[=srl::tag::auto_seq{}]] TrustedFields {
-    [[=srl::tag::bypass_validation{}]]
+struct [[=xasrl::tag::auto_seq{}]] TrustedFields {
+    [[=xasrl::tag::bypass_validation{}]]
     std::vector<Mode> trusted_modes;
     Mode checked_mode; // 此字段仍校验
 };
@@ -549,10 +563,10 @@ struct [[=srl::tag::auto_seq{}]] TrustedFields {
 自动叶节点类型可以用 `transient` 排除仅供运行时使用的成员：
 
 ```cpp
-struct [[=srl::tag::leaf{}]] CachedValue {
+struct [[=xasrl::tag::leaf{}]] CachedValue {
     std::uint32_t value{};
 
-    [[=srl::tag::transient{}]]
+    [[=xasrl::tag::transient{}]]
     std::uint32_t cache_generation{};
 };
 ```
@@ -573,13 +587,13 @@ codec 按同一份标量布局展开复制并将 padding 写零；无法安全�
 和 `auto_seq`：`auto_seq` 中被放行的指针实体会直接复制该实体的对象表示。
 
 ```cpp
-struct [[=srl::tag::leaf{}]]
-       [[=srl::tag::bypass_pointer_check{}]] ProcessLocalHandle {
+struct [[=xasrl::tag::leaf{}]]
+       [[=xasrl::tag::bypass_pointer_check{}]] ProcessLocalHandle {
     void *value{};
 };
 
-struct [[=srl::tag::auto_seq{}]] State {
-    [[=srl::tag::bypass_pointer_check{}]]
+struct [[=xasrl::tag::auto_seq{}]] State {
+    [[=xasrl::tag::bypass_pointer_check{}]]
     void *runtime_address{};
 };
 ```
@@ -591,22 +605,22 @@ struct [[=srl::tag::auto_seq{}]] State {
 
 ```cpp
 struct Record {
-    [[=srl::tag::field{.id = 1}]]
-    [[=srl::tag::leaf{}]]
+    [[=xasrl::tag::field{.id = 1}]]
+    [[=xasrl::tag::leaf{}]]
     third_party::trivial_value value;
 };
 ```
 
 字段级强制叶节点要求类型 trivially copyable，并且默认要求独一对象表示；设置
 `.allow_padding = true` 时 padding 占据格式空间但写零。需要包含指针表示时，另加
-`[[=srl::tag::bypass_pointer_check{}]]`。
+`[[=xasrl::tag::bypass_pointer_check{}]]`。
 
 整数、浮点、枚举和 `bool` 是内建叶节点类型。`std::string` 始终走字符容器路径，不提供
-`leaf_codec<std::string>`。其它固定尺寸的特殊类型可显式特化 `srl::leaf_codec<T>`。
+`leaf_codec<std::string>`。其它固定尺寸的特殊类型可显式特化 `xasrl::leaf_codec<T>`。
 自定义 codec 必须提供可在编译期求值的 `fixed_size`，并直接对调用方提供的
 `std::span<std::byte, fixed_size>` 和 `std::span<const std::byte, fixed_size>` 编解码，不创建
 中间 payload buffer。变长类型应使用容器或 record 表示。自定义类型仍应在声明处标记
-`[[=srl::tag::leaf{}]]`。
+`[[=xasrl::tag::leaf{}]]`。
 
 ## 内存格式
 
@@ -621,23 +635,23 @@ v5 使用小端字节序。每份文档的 16 字节前缀由 `u32 magic`（字�
   `u32 wire_type`。record 的槽位数等于定义的行数，sequence / map 使用实例槽位数，
   leaf 和 stream 的槽位数字段为零。默认模式的复合 entry 在头之后写 `u32 definition_id`，
   为零时紧跟内联定义；再按定义顺序拼接 payload。根 leaf 有 entry 头，子 leaf 只有 payload。
-- `[[=srl::tag::inline_mapping{}]]` 可用于复合类型或字段，强制每次出现时写内联定义，
+- `[[=xasrl::tag::inline_mapping{}]]` 可用于复合类型或字段，强制每次出现时写内联定义，
   后代仍独立决策。叶子、未序列化或 transient 字段不接受此注解；转换字段按存储类型判断。
   自动布局仅在编译期能保证复用至少两次时共享。相同定义按完整字节判等；
   动态容器的重复项不计入保证次数。运行时直接复制编译好的定义，不重建字段映射。
-- 显式选择 `srl::schema_storage::schema_only` 时，定义数量为 `0xffffffff`，
+- 显式选择 `xasrl::schema_storage::schema_only` 时，定义数量为 `0xffffffff`，
   文档头包含完整 wire schema 指纹；不写共享区、内联定义或定义 ID。读端自动识别此模式，
   指纹不匹配即拒绝，不能投影到不同 schema。指纹只用于格式匹配，不是内容校验或身份认证。
 
 ```cpp
-constexpr auto mode = srl::schema_storage::schema_only;
-auto status = srl::serialize<mode>(value, bytes, context);
-// 编译期固定长度：srl::serialized_size<T, mode>()
-// 先准备后写：srl::prepared_serialization<T, mode>::prepare(value, context)
+constexpr auto mode = xasrl::schema_storage::schema_only;
+auto status = xasrl::serialize<mode>(value, bytes, context);
+// 编译期固定长度：xasrl::serialized_size<T, mode>()
+// 先准备后写：xasrl::prepared_serialization<T, mode>::prepare(value, context)
 ```
 
 默认模式仍允许 record 兼容投影和未知字段跳过，但解码要顺序扫描前面的字段，不再按实例偏移直接跳转。
-容器上限仍为 24 位槽位数；测长、字节偏移和尺寸使用 `srl::szt`。编码使用完整的可写缓冲区，
+容器上限仍为 24 位槽位数；测长、字节偏移和尺寸使用 `xasrl::szt`。编码使用完整的可写缓冲区，
 不提供不可回寻的流式 I/O。磁盘读取拒绝旧版本。
 
 ## 磁盘块
@@ -662,27 +676,27 @@ Windows 写入先通过 `CREATE_NEW` 创建同目录唯一临时文件，完成�
 `read_block(path, max_entry_bytes)` 在分配文件缓冲前检查大小；默认上限与解码输入相同。
 
 ```cpp
-srl::serialization_context context;
+xasrl::serialization_context context;
 
-srl::byte_buffer bytes;
-if (auto status = srl::serialize(value, bytes, context); status) {
+xasrl::byte_buffer bytes;
+if (auto status = xasrl::serialize(value, bytes, context); status) {
     return status;
 }
-if (auto status = srl::write_block(path, bytes.span()); status) {
+if (auto status = xasrl::write_block(path, bytes.span()); status) {
     return status;
 }
-auto block = srl::read_block(path);
+auto block = xasrl::read_block(path);
 if (!block) {
     return block.error();
 }
 T restored{};
-if (auto status = srl::deserialize(block->span(), restored, context); status) {
+if (auto status = xasrl::deserialize(block->span(), restored, context); status) {
     return status;
 }
 ```
 
 `write_block` 和 `read_block` 只负责第 3、4 层转换，不接受对象或上下文。
-`write_block` 返回 `srl::error`，`read_block` 返回 `std::expected<byte_buffer, srl::error>`。
+`write_block` 返回 `xasrl::error`，`read_block` 返回 `std::expected<byte_buffer, xasrl::error>`。
 对象文件读写由调用方显式组合上述入口；没有单独的 `save` / `load` 包装。
 
 ## 编译期 Schema 树
@@ -694,15 +708,15 @@ leaf 根节点额外包含 entry header，而嵌套 leaf 值仅包含 payload。
 仅需子节点索引时使用 `tree.child_indices(index)`。
 
 ```cpp
-constexpr srl::schema description(^^Profile);
+constexpr xasrl::schema description(^^Profile);
 // 类型标签入口保留 reflected_stream<T> 的默认判断。
-constexpr srl::schema typed_description(std::in_place_type<Profile>);
-static_assert(srl::schema_valid(^^Profile));
+constexpr xasrl::schema typed_description(std::in_place_type<Profile>);
+static_assert(xasrl::schema_valid(^^Profile));
 constexpr auto value = description.tree.value_index();
 constexpr auto first = description.tree[value, 0];
 constexpr auto field_id = first.record_field().id;
 constexpr auto stored_type = first.type(); // std::meta::info
-constexpr auto encoded_size = srl::detail::root_encode_extent<Profile>;
+constexpr auto encoded_size = xasrl::detail::root_encode_extent<Profile>;
 ```
 
 节点是只读编译期视图。`kind()` 决定可用的形状数据，例如 `leaf()` 提供 codec 和可选对象布局，
@@ -747,8 +761,8 @@ codec 与编码计划直接从 schema 节点读取字段 ID、wire type 和尺�
 避免两次调用业务转换
 
 ```cpp
-srl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
-auto prepared = srl::prepared_serialization<T>::prepare(recorder, value, context);
+xasrl::encoding_recorder recorder{*std::pmr::new_delete_resource()};
+auto prepared = xasrl::prepared_serialization<T>::prepare(recorder, value, context);
 if (!prepared) { return prepared.error(); }
 std::vector<std::byte> output(prepared->size());
 return prepared->encode(std::span{output});
@@ -765,21 +779,21 @@ return prepared->encode(std::span{output});
 
 计划可以移动，也可重复写出；移动后的源计划只允许销毁。context 仅在准备时参与转换，
 不由计划保存。直接写 `byte_buffer` 时调用
-`serialize(value, bytes, srl::srl_context{context, recorder})`，不必预先测长。
+`serialize(value, bytes, xasrl::srl_context{context, recorder})`，不必预先测长。
 `srl_context` 借用 `context` 和 `recorder`，不接管它们的生命周期
 
 ## Schema 可视化
 
 `schema_string(^^T, options)` 在编译期返回具有静态存储期的 `std::string_view`，
-无效 schema 会在编译期被拒绝。省略 `srl::schema_format_options` 时默认输出精简结构，
+无效 schema 会在编译期被拒绝。省略 `xasrl::schema_format_options` 时默认输出精简结构，
 同一层级的字段标签按列对齐：
 `[ID]` 标记 record 字段，`[#位置]` 标记 stream 的零基位置，`sequence[N]` 和 `map[N]`
 标记容器数量（`*` 表示动态）
 
 ```cpp
-constexpr auto compact = srl::schema_string(^^Profile);
-constexpr auto detailed = srl::schema_string(^^Profile, {.detailed = true});
-std::println("{0}\n\n{0:d}", srl::schema_view<^^Profile>{});
+constexpr auto compact = xasrl::schema_string(^^Profile);
+constexpr auto detailed = xasrl::schema_string(^^Profile, {.detailed = true});
+std::println("{0}\n\n{0:d}", xasrl::schema_view<^^Profile>{});
 ```
 
 `b<数字>` 说明符改为绘制对象 leaf 内部的内存布局字节图：`<数字>` 是每行字节数的指数
@@ -789,9 +803,9 @@ std::println("{0}\n\n{0:d}", srl::schema_view<^^Profile>{});
 `b` 与 `d` 不可同时使用
 
 ```cpp
-std::println("{0:b}\n\n{0:b2}", srl::schema_view<^^Profile>{});  // 8B/行、4B/行
+std::println("{0:b}\n\n{0:b2}", xasrl::schema_view<^^Profile>{});  // 8B/行、4B/行
 // 等价的编译期入口：
-constexpr auto memory = srl::schema_string(^^Profile,
+constexpr auto memory = xasrl::schema_string(^^Profile,
     {.memory_layout = true, .memory_layout_exponent = 3});
 ```
 
@@ -799,8 +813,8 @@ constexpr auto memory = srl::schema_string(^^Profile,
 
 ```cpp
 using meters = float;
-struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] Position {
-    [[=srl::schema_type_alias{^^meters}]] meters x;
+struct [[=xasrl::tag::leaf{.allow_non_unique_presentation = true}]] Position {
+    [[=xasrl::schema_type_alias{^^meters}]] meters x;
 };
 // {:b} 显示 [x: meters]
 ```
@@ -809,7 +823,7 @@ struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] Position {
 
 ```cpp
 using ProfileAlias = Profile;
-constexpr auto schema = srl::schema_string(^^ProfileAlias);
+constexpr auto schema = xasrl::schema_string(^^ProfileAlias);
 ```
 
 Leaf 行始终显示 wire payload 字节数，不包含外层条目头；leaf 类别只在详细模式显示。

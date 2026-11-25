@@ -2,14 +2,14 @@
 
 namespace {
     struct sparse {
-        [[=srl::tag::field{1}]] char first{};
-        [[=srl::tag::field{100}]] char second{};
-        [[=srl::tag::field{120}]] char third{};
+        [[=xasrl::tag::field{1}]] char first{};
+        [[=xasrl::tag::field{100}]] char second{};
+        [[=xasrl::tag::field{120}]] char third{};
     };
 }
 
 TEST(WireCursor, MissingFieldDoesNotConsumeTheNextField) {
-    using namespace srl;
+    using namespace xasrl;
     byte_buffer bytes;
     ASSERT_FALSE(serialize(sparse{}, bytes, srl_test::default_context));
     const auto doc = srl_test::open_document(bytes.span());

@@ -8,7 +8,7 @@
 #include "../detail/reflection.hpp"
 #include "../detail/object_layout.hpp"
 
-namespace srl {
+namespace xasrl {
     template<typename T>
     consteval bool leaf_uses_direct_object_representation() {
         using value_type = codec_value_type<T>;

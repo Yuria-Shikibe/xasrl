@@ -5,10 +5,10 @@
 #include "test_models.hpp"
 
 namespace srl_test {
-    inline const srl::serialization_context default_context;
-    inline const srl::serialization_context rejecting_context{
-        srl::serialization_config{
-            .duplicates = srl::duplicate_policy::reject,
+    inline const xasrl::serialization_context default_context;
+    inline const xasrl::serialization_context rejecting_context{
+        xasrl::serialization_config{
+            .duplicates = xasrl::duplicate_policy::reject,
         }};
 
     inline void require(bool condition, std::string_view description) {
@@ -18,24 +18,24 @@ namespace srl_test {
     }
 
     template<typename T>
-    void require_error(const std::expected<T, srl::error> &result,
-                       srl::error_code expected,
+    void require_error(const std::expected<T, xasrl::error> &result,
+                       xasrl::error_code expected,
                        std::string_view description) {
         require(!result && result.error().code == expected, description);
     }
 
-    inline void require_error(srl::error result, srl::error_code expected,
+    inline void require_error(xasrl::error result, xasrl::error_code expected,
                               std::string_view description) {
         require(result.code == expected, description);
     }
 
-    inline void set_u32(srl::byte_buffer &buffer, std::size_t offset, std::uint32_t value) {
-        srl::detail::write_trivial(buffer.span().subspan(offset), value);
+    inline void set_u32(xasrl::byte_buffer &buffer, std::size_t offset, std::uint32_t value) {
+        xasrl::detail::write_trivial(buffer.span().subspan(offset), value);
     }
 
-    [[nodiscard]] inline std::uint32_t get_u32(const srl::byte_buffer &buffer,
+    [[nodiscard]] inline std::uint32_t get_u32(const xasrl::byte_buffer &buffer,
                                                std::size_t offset) {
-        return srl::detail::read_trivial<std::uint32_t>(buffer.span().subspan(offset));
+        return xasrl::detail::read_trivial<std::uint32_t>(buffer.span().subspan(offset));
     }
 
     inline void set_file_byte(const std::filesystem::path &path,
@@ -49,20 +49,20 @@ namespace srl_test {
         require(static_cast<bool>(file), "failed to mutate test block");
     }
 
-    inline void set_u64(srl::byte_buffer &buffer, std::size_t offset, srl::szt value) {
-        srl::detail::write_trivial(buffer.span().subspan(offset), value);
+    inline void set_u64(xasrl::byte_buffer &buffer, std::size_t offset, xasrl::szt value) {
+        xasrl::detail::write_trivial(buffer.span().subspan(offset), value);
     }
 
-    [[nodiscard]] inline srl::szt get_u64(const srl::byte_buffer &buffer, std::size_t offset) {
-        return srl::detail::read_trivial<srl::szt>(buffer.span().subspan(offset));
+    [[nodiscard]] inline xasrl::szt get_u64(const xasrl::byte_buffer &buffer, std::size_t offset) {
+        return xasrl::detail::read_trivial<xasrl::szt>(buffer.span().subspan(offset));
     }
 
     struct document_view {
-        srl::detail::wire_document document;
-        srl::detail::defined_entry entry;
+        xasrl::detail::wire_document document;
+        xasrl::detail::defined_entry entry;
 
-        srl::detail::field_view at(std::size_t index) const {
-            srl::detail::defined_entry::cursor cursor;
+        xasrl::detail::field_view at(std::size_t index) const {
+            xasrl::detail::defined_entry::cursor cursor;
             for (std::size_t i = 0; i != index; ++i) {
                 if (!entry.next(cursor)) { throw std::runtime_error("invalid preceding field"); }
             }
@@ -73,13 +73,13 @@ namespace srl_test {
 
         std::size_t root_offset() const noexcept { return document.root_offset; }
         std::size_t inline_definition_offset() const noexcept {
-            return document.root_offset + srl::detail::entry_head_wire_size + srl::detail::definition_reference_size;
+            return document.root_offset + xasrl::detail::entry_head_wire_size + xasrl::detail::definition_reference_size;
         }
     };
 
     inline document_view open_document(std::span<const std::byte> bytes) {
-        auto document = srl::detail::wire_document::read(bytes, 0).value();
-        auto entry = srl::detail::defined_entry::parse(document.root, document, {}).value();
+        auto document = xasrl::detail::wire_document::read(bytes, 0).value();
+        auto entry = xasrl::detail::defined_entry::parse(document.root, document, {}).value();
         return {std::move(document), entry};
     }
 }

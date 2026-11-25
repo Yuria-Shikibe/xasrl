@@ -12,7 +12,7 @@
 #include <system_error>
 #include <type_traits>
 
-namespace srl {
+namespace xasrl {
     static_assert(CHAR_BIT == 8, "srl requires 8-bit bytes");
     static_assert(std::endian::native == std::endian::little, "srl only supports little-endian targets");
 

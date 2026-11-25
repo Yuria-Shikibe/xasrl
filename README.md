@@ -32,20 +32,20 @@ xmake run srl.tests
 #include "srl/core.hpp"
 
 struct Player {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     int level{};
 };
 
 int main() {
-    const srl::serialization_context context;
+    const xasrl::serialization_context context;
     const Player source{.level = 26};
-    srl::byte_buffer bytes;
-    if (auto status = srl::serialize(source, bytes, context); status) {
+    xasrl::byte_buffer bytes;
+    if (auto status = xasrl::serialize(source, bytes, context); status) {
         return 1;
     }
 
     Player restored{};
-    if (auto status = srl::deserialize(bytes.span(), restored, context); status) {
+    if (auto status = xasrl::deserialize(bytes.span(), restored, context); status) {
         return 1;
     }
     return 0;

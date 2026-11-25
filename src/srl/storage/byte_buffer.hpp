@@ -20,7 +20,7 @@
 #define SRL_NO_UNIQUE_ADDRESS [[no_unique_address]]
 #endif
 
-namespace srl::storage {
+namespace xasrl::storage {
     template<typename Allocator = std::allocator<std::byte>>
         requires std::same_as<typename std::allocator_traits<Allocator>::value_type, std::byte>
     class basic_byte_buffer {
@@ -197,7 +197,7 @@ namespace srl::storage {
     using byte_buffer = basic_byte_buffer<>;
 }
 
-namespace srl {
+namespace xasrl {
     using byte_buffer = storage::byte_buffer;
 }
 

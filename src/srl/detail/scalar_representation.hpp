@@ -9,7 +9,7 @@
 #include "utility.hpp"
 #include "validation.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     template<typename T>
     struct scalar_representation {
         using storage_type = T;
@@ -40,7 +40,7 @@ namespace srl::detail {
         static validation_status validate(storage_type value) noexcept {
             // Validate the representation before converting a bool-backed enum.
             if (underlying::validate(value)) { return fail(error_code::invalid_enum_value); }
-            return srl::enum_contains<T>(static_cast<underlying_type>(value))
+            return xasrl::enum_contains<T>(static_cast<underlying_type>(value))
                 ? error{} : fail(error_code::invalid_enum_value);
         }
     };

@@ -5,7 +5,7 @@
 
 #include "annotation_target.hpp"
 
-namespace srl {
+namespace xasrl {
     class serialization_context;
 
     namespace detail {

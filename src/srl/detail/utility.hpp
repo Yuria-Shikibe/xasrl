@@ -16,7 +16,7 @@
 #include "../types.hpp"
 #include "../wire_format.hpp"
 
-namespace srl {
+namespace xasrl {
     namespace detail {
         constexpr type_hash_type fnv1a32_offset = 2166136261u;
         constexpr type_hash_type fnv1a32_prime = 16777619u;

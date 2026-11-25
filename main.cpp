@@ -2,83 +2,106 @@
 #include <stdexcept>
 #include <string>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "srl/core.hpp"
+#include "srl/mem/struct_transform.hpp"
 #include "srl/number_to_string.hpp"
 #include "srl/schema_visualization.hpp"
 
 template <typename T>
-struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] vec2 {
+struct [[=xasrl::tag::leaf{.allow_non_unique_presentation = true}]] vec2 {
     T x, y;
 };
 
 
 
-struct [[=srl::tag::leaf{.allow_non_unique_presentation = true}]] trans2 {
+struct [[=xasrl::tag::leaf{.allow_non_unique_presentation = true}]] trans2 {
     vec2<float> pos;
     float rot;
 };
 
 
 struct PlayerProfile {
-    [[=srl::tag::field{.id = 1}]]
+    [[=xasrl::tag::field{.id = 1}]]
     std::string name{};
 
-    [[=srl::tag::field{.id = 2}]]
+    [[=xasrl::tag::field{.id = 2}]]
     std::vector<vec2<std::uint32_t>> vals{};
 
-    [[=srl::tag::field{.id = 5}]]
+    [[=xasrl::tag::field{.id = 5}]]
     std::vector<vec2<trans2>> valss{};
 
-    [[=srl::tag::field{.id = 4}]]
+    [[=xasrl::tag::field{.id = 4}]]
     trans2 trans{};
 
-    [[=srl::tag::field{.id = 3}]]
+    [[=xasrl::tag::field{.id = 3}]]
     int level{};
+};
+
+struct PlayerProfileView {
+    PlayerProfileView &operator=(const PlayerProfileView &) = default;
+
+    [[=xasrl::tag::field{1}]]
+    std::string display_name{};
+
+    [[=xasrl::tag::field{30}, =xasrl::tag::accept_id{3}]]
+    long long rank{};
+
+    [[=xasrl::tag::field{31}]]
+    int lives{3};
 };
 
 int main() {
 
-    const srl::serialization_context context;
-    const PlayerProfile source{
+    const xasrl::serialization_context context;
+    PlayerProfile source{
         .name = "reflection demo",
         .vals = {{1, 2}, {5, 4}, {2, 3}},
         .level = 26,
     };
 
+    PlayerProfileView view;
+    xasrl::mem::transform_assign(view, std::as_const(source));
+    std::println("In-memory copy: {}, rank {}, lives {}", view.display_name, view.rank, view.lives);
+
     std::println("Schema (compact):\n{0}\n\nSchema (detailed):\n{0:d}"
                  "\n\nSchema (memory, default 8B/row):\n{0:b}"
                  "\n\nSchema (memory, 4B/row):\n{0:b2}",
-                 srl::schema_view<^^PlayerProfile>{});
+                 xasrl::schema_view<^^PlayerProfile>{});
 
-    srl::byte_buffer bytes{};
-    const auto bytes_status = srl::serialize(source, bytes, srl::srl_context{context});
+    xasrl::byte_buffer bytes{};
+    const auto bytes_status = xasrl::serialize(source, bytes, xasrl::srl_context{context});
     if (bytes_status) {
-        throw std::runtime_error(std::string{srl::message(bytes_status.code)});
+        throw std::runtime_error(std::string{xasrl::message(bytes_status.code)});
     }
 
     PlayerProfile copy{};
-    const auto copy_status = srl::deserialize(bytes.span(), copy, context);
+    const auto copy_status = xasrl::deserialize(bytes.span(), copy, context);
     if (copy_status) {
-        throw std::runtime_error(std::string{srl::message(copy_status.code)});
+        throw std::runtime_error(std::string{xasrl::message(copy_status.code)});
     }
 
-    const auto level = srl::number_to_string(copy.level);
-    const auto size = srl::number_to_string(bytes.size());
+    const auto level = xasrl::number_to_string(copy.level);
+    const auto size = xasrl::number_to_string(bytes.size());
     std::println("{} reached level {} ({} serialized bytes)", copy.name, level.view(), size.view());
 
     const std::vector<std::vector<int>> nested{{1, 2}, {}, {3}};
-    if (const auto status = srl::serialize(nested, bytes, context); status) {
-        throw std::runtime_error(std::string{srl::message(status.code)});
+    if (const auto status = xasrl::serialize(nested, bytes, context); status) {
+        throw std::runtime_error(std::string{xasrl::message(status.code)});
     }
     const auto embedded_size = bytes.size();
-    if (const auto status = srl::serialize<srl::schema_storage::schema_only>(nested, bytes, context); status) {
-        throw std::runtime_error(std::string{srl::message(status.code)});
+    if (const auto status = xasrl::serialize<xasrl::schema_storage::schema_only>(nested, bytes, context); status) {
+        throw std::runtime_error(std::string{xasrl::message(status.code)});
     }
     std::vector<std::vector<int>> restored;
-    if (const auto status = srl::deserialize(bytes.span(), restored, context); status) {
-        throw std::runtime_error(std::string{srl::message(status.code)});
+    if (const auto status = xasrl::deserialize(bytes.span(), restored, context); status) {
+        throw std::runtime_error(std::string{xasrl::message(status.code)});
     }
     std::println("Nested sequence: {} embedded bytes, {} schema-only bytes", embedded_size, bytes.size());
+
+    PlayerProfileView moved;
+    xasrl::mem::transform_assign(moved, std::move(source));
+    std::println("In-memory move: {}, rank {}, lives {}", moved.display_name, moved.rank, moved.lives);
 }

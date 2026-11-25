@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace srl::tag{
+namespace xasrl::tag{
     // Reflectable placement hints; schema rules still decide whether a use is valid.
     enum class target : std::uint8_t {
         member_field = 1 << 0,

@@ -12,7 +12,7 @@
 #include "conversion.hpp"
 #include "limits.hpp"
 
-namespace srl {
+namespace xasrl {
     class context_reference_handler {
         const void *const memory_type_;
         const void *const storage_type_;

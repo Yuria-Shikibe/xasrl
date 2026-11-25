@@ -18,7 +18,7 @@
 #include "storage/byte_buffer.hpp"
 #include "storage/encoding_recorder.hpp"
 
-namespace srl {
+namespace xasrl {
     namespace detail {
         template<serializable T, schema_storage Mode, bool Recorded = root_codec<T>::uses_recorder>
         class encoding_operation {

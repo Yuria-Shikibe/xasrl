@@ -13,7 +13,7 @@
 #include "../wire_format.hpp"
 #include "../detail/object_layout_model.hpp"
 
-namespace srl {
+namespace xasrl {
     enum class schema_kind : std::uint8_t { root, leaf, record, stream, container };
 
     enum class leaf_representation : std::uint8_t { codec, direct, segmented, forced };
@@ -42,6 +42,12 @@ namespace srl {
         schema_field_binding field;
         id_type id;
         std::meta::info fallback{};
+        const id_type *alias_data{};
+        std::size_t alias_count{};
+
+        [[nodiscard]] consteval std::span<const id_type> accepted_ids() const noexcept {
+            return {alias_data, alias_count};
+        }
 
         [[nodiscard]] consteval std::optional<std::meta::info> fallback_type() const {
             if (fallback != std::meta::info{}) { return fallback; }

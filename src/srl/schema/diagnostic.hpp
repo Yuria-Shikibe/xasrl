@@ -11,7 +11,7 @@
 
 #include "../number_to_string.hpp"
 
-namespace srl {
+namespace xasrl {
     enum class schema_error : std::uint8_t {
         none, invalid_schema, unsupported_type, conflicting_annotations, duplicate_field_id,
         field_id_overflow, recursive_type, invalid_conversion, invalid_object_representation,
@@ -47,7 +47,7 @@ namespace srl {
     }
 }
 
-namespace srl::detail {
+namespace xasrl::detail {
     class schema_failure : public std::runtime_error {
         schema_issue issue_;
     public:

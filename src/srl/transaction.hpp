@@ -12,7 +12,7 @@
 
 #include "detail/reflection.hpp"
 
-namespace srl {
+namespace xasrl {
     // A customization owns both construction and commit: clone must preserve
     // every precondition of commit, including allocator equality.
     template<typename T>

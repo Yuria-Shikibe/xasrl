@@ -4,7 +4,7 @@
 
 #include "reflection_facts.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     enum class validation_mode { checked, unchecked };
 
     consteval validation_mode validation_for(std::meta::info entity, validation_mode inherited = validation_mode::checked) {

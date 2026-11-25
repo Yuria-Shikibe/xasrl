@@ -42,7 +42,7 @@ namespace {
     };
 
     TEST(ByteBuffer, ResizeReuseAndValueSemantics) {
-        srl::byte_buffer bytes;
+        xasrl::byte_buffer bytes;
         EXPECT_TRUE(bytes.empty());
         EXPECT_EQ(bytes.begin(), bytes.end());
         bytes.reserve(32);
@@ -72,7 +72,7 @@ namespace {
 
     TEST(ByteBuffer, UninitializedGrowthAndOverwrite) {
         allocation_state state;
-        srl::storage::basic_byte_buffer<byte_allocator<false>> bytes{byte_allocator<false>{&state}};
+        xasrl::storage::basic_byte_buffer<byte_allocator<false>> bytes{byte_allocator<false>{&state}};
         bytes.resize_uninitialized(8);
         // The allocator explicitly initialized these bytes: growth must not overwrite them.
         EXPECT_TRUE(std::ranges::all_of(bytes, [](auto value) { return value == std::byte{0xa5}; }));
@@ -118,7 +118,7 @@ namespace {
     void check_allocators() {
         allocation_state first, second;
         using allocator = byte_allocator<Propagate>;
-        using buffer = srl::storage::basic_byte_buffer<allocator>;
+        using buffer = xasrl::storage::basic_byte_buffer<allocator>;
         buffer source{allocator{&first}};
         source.resize(3, std::byte{5});
         buffer target{allocator{&second}};

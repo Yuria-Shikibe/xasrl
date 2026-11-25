@@ -19,7 +19,7 @@
 #include "limits.hpp"
 #include "detail/staged_file.hpp"
 
-namespace srl {
+namespace xasrl {
     namespace detail {
         constexpr std::size_t io_chunk_size = 1024 * 1024;
         static_assert(io_chunk_size <= std::numeric_limits<std::streamsize>::max());

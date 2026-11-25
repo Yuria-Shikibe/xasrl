@@ -12,7 +12,7 @@
 #include "schema/build.hpp"
 #include "schema/mapping_layout.hpp"
 
-namespace srl {
+namespace xasrl {
     consteval bool has_serialized_fields(std::meta::info type) {
         return detail::schema_has_fields(std::meta::remove_cvref(type));
     }

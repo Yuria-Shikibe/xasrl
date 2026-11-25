@@ -11,7 +11,7 @@
 #include "../schema/model.hpp"
 #include "wire_document.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     // A successful measurement and an unchanged source bound all reservations.
     class encoding_output {
         std::span<std::byte> remaining_;

@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace srl::detail {
+namespace xasrl::detail {
     template<typename T>
     struct default_snapshot {
         static constexpr bool valid = std::meta::is_structural_type(^^T)

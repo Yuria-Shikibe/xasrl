@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace srl {
+namespace xasrl {
     namespace detail {
         class encoding_session;
         class encoding_cursor;

@@ -11,7 +11,7 @@
 #include "../types.hpp"
 #include "../wire_format.hpp"
 
-namespace srl::detail {
+namespace xasrl::detail {
     class extent_overflow : public std::overflow_error {
     public:
         consteval extent_overflow(std::string_view operation, szt left, szt right)
@@ -21,7 +21,7 @@ namespace srl::detail {
     };
 }
 
-namespace srl {
+namespace xasrl {
     struct schema_extent {
     public:
         szt value;

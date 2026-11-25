@@ -180,8 +180,8 @@ bool original(int value) {
 
 template<typename E, unsigned Width, bool Binary>
 bool partitioned(int value) {
-    static constexpr auto parts = std::define_static_array(srl::detail::make_enum_partitions(^^E, Width));
-    const auto key = srl::detail::enum_order_key(static_cast<std::uint64_t>(value),
+    static constexpr auto parts = std::define_static_array(xasrl::detail::make_enum_partitions(^^E, Width));
+    const auto key = xasrl::detail::enum_order_key(static_cast<std::uint64_t>(value),
         std::meta::is_signed_type(std::meta::underlying_type(^^E)));
     if constexpr (Binary) {
         std::size_t first = 0, last = parts.size();
@@ -218,14 +218,14 @@ void measure(const char *name, const std::vector<int> &input) {
         checksum += count;
     }
     std::ranges::sort(samples);
-    const auto checksum_text = srl::number_to_string(checksum);
+    const auto checksum_text = xasrl::number_to_string(checksum);
     std::println("  {:<14} {:7.3f} ns/query ({})", name, samples[3], checksum_text.view());
 }
 
 
 template<typename E>
 void run(const char *name) {
-    static constexpr auto parts = std::define_static_array(srl::detail::make_enum_partitions(^^E));
+    static constexpr auto parts = std::define_static_array(xasrl::detail::make_enum_partitions(^^E));
     std::vector<int> declared;
     template for (constexpr auto e: std::define_static_array(std::meta::enumerators_of(^^E))) {
         declared.push_back(std::to_underlying(std::meta::extract<E>(std::meta::constant_of(e))));
@@ -245,24 +245,24 @@ void run(const char *name) {
                 partitioned<E, 32, false>(value) != expected ||
                 partitioned<E, 64, false>(value) != expected ||
                 partitioned<E, 64, true>(value) != expected ||
-                srl::enum_contains<E>(value) != expected) {
+                xasrl::enum_contains<E>(value) != expected) {
                 throw std::runtime_error("enum membership mismatch");
             }
         }
         constexpr std::array counts{
-            srl::detail::make_enum_partitions(^^E, 0).size(),
-            srl::detail::make_enum_partitions(^^E, 16).size(),
-            srl::detail::make_enum_partitions(^^E, 32).size(),
+            xasrl::detail::make_enum_partitions(^^E, 0).size(),
+            xasrl::detail::make_enum_partitions(^^E, 16).size(),
+            xasrl::detail::make_enum_partitions(^^E, 32).size(),
         };
-        const auto hits = srl::number_to_string(hit_percent);
-        const auto ranges = srl::number_to_string(counts[0]);
-        const auto bits16 = srl::number_to_string(counts[1]);
-        const auto bits32 = srl::number_to_string(counts[2]);
-        const auto bits64 = srl::number_to_string(parts.size());
+        const auto hits = xasrl::number_to_string(hit_percent);
+        const auto ranges = xasrl::number_to_string(counts[0]);
+        const auto bits16 = xasrl::number_to_string(counts[1]);
+        const auto bits32 = xasrl::number_to_string(counts[2]);
+        const auto bits64 = xasrl::number_to_string(parts.size());
         std::println("{} sampled_hits={} partitions={}/{}/{}/{}", name, hits.view(),
             ranges.view(), bits16.view(), bits32.view(), bits64.view());
         measure<original<E>>("original", input);
-        measure<static_cast<bool (*)(std::underlying_type_t<E>)>(&srl::enum_contains<E>)>("srl-current", input);
+        measure<static_cast<bool (*)(std::underlying_type_t<E>)>(&xasrl::enum_contains<E>)>("srl-current", input);
         measure<partitioned<E, 0, false>>("ranges-linear", input);
         measure<partitioned<E, 16, false>>("bits16-linear", input);
         measure<partitioned<E, 32, false>>("bits32-linear", input);
@@ -271,17 +271,17 @@ void run(const char *name) {
     }
 }
 
-enum class [[=srl::tag::bit_flag{.mask = 0x83}]] flags8 : std::uint8_t { a = 1, b = 2, c = 128 };
-enum class [[=srl::tag::bit_flag{.mask = 0x8000000000000003ull}]] flags64 : std::uint64_t { a = 1 };
+enum class [[=xasrl::tag::bit_flag{.mask = 0x83}]] flags8 : std::uint8_t { a = 1, b = 2, c = 128 };
+enum class [[=xasrl::tag::bit_flag{.mask = 0x8000000000000003ull}]] flags64 : std::uint64_t { a = 1 };
 
 template<typename E, bool Original>
 bool flags_check(int input) {
     using underlying = std::underlying_type_t<E>;
     const auto value = static_cast<underlying>(input);
     if constexpr (Original) {
-        return (static_cast<std::uint64_t>(value) & ~srl::detail::make_enum_policy(^^E).mask) == 0;
+        return (static_cast<std::uint64_t>(value) & ~xasrl::detail::make_enum_policy(^^E).mask) == 0;
     } else {
-        return srl::enum_contains<E>(value);
+        return xasrl::enum_contains<E>(value);
     }
 }
 
